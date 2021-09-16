@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
 """RayRunner, executing on a Ray cluster.
 
 """
@@ -31,86 +30,88 @@ from ray_beam_runner.overrides import _get_overrides
 from ray_beam_runner.translator import TranslationExecutor
 from apache_beam.runners.runner import PipelineState, PipelineResult
 
-__all__ = ['RayRunner']
+__all__ = ["RayRunner"]
 
 from apache_beam.typehints import Dict
 
 _LOGGER = logging.getLogger(__name__)
 
 
-
 class RayRunnerOptions(PipelineOptions):
-  """DirectRunner-specific execution options."""
-  @classmethod
-  def _add_argparse_args(cls, parser):
-    parser.add_argument(
-        '--parallelism',
-        type=int,
-        default=1,
-        help='Parallelism for Read/Create operations')
+    """DirectRunner-specific execution options."""
+
+    @classmethod
+    def _add_argparse_args(cls, parser):
+        parser.add_argument(
+            "--parallelism",
+            type=int,
+            default=1,
+            help="Parallelism for Read/Create operations")
 
 
 class RayRunner(BundleBasedDirectRunner):
-  """Executes a single pipeline on the local machine."""
-  @staticmethod
-  def is_fnapi_compatible():
-    return False
+    """Executes a single pipeline on the local machine."""
 
-  def run_pipeline(self, pipeline, options):
-    """Execute the entire pipeline and returns a RayPipelineResult."""
-    runner_options = options.view_as(RayRunnerOptions)
+    @staticmethod
+    def is_fnapi_compatible():
+        return False
 
-    collection_map = CollectionMap()
+    def run_pipeline(self, pipeline, options):
+        """Execute the entire pipeline and returns a RayPipelineResult."""
+        runner_options = options.view_as(RayRunnerOptions)
 
-    # Override some transforms with custom transforms
-    overrides = _get_overrides()
-    pipeline.replace_all(overrides)
+        collection_map = CollectionMap()
 
-    # Execute transforms using Ray datasets
-    translation_executor = TranslationExecutor(collection_map, parallelism=runner_options.parallelism)
-    pipeline.visit(translation_executor)
+        # Override some transforms with custom transforms
+        overrides = _get_overrides()
+        pipeline.replace_all(overrides)
 
-    named_graphs = [
-      transform.named_outputs()
-      for transform in pipeline.transforms_stack
-    ]
+        # Execute transforms using Ray datasets
+        translation_executor = TranslationExecutor(
+            collection_map, parallelism=runner_options.parallelism)
+        pipeline.visit(translation_executor)
 
-    outputs = {}
-    for named_outputs in named_graphs:
-      outputs.update(named_outputs)
+        named_graphs = [
+            transform.named_outputs()
+            for transform in pipeline.transforms_stack
+        ]
 
-    _LOGGER.info('Running pipeline with RayRunner.')
+        outputs = {}
+        for named_outputs in named_graphs:
+            outputs.update(named_outputs)
 
-    result = RayPipelineResult(outputs)
+        _LOGGER.info("Running pipeline with RayRunner.")
 
-    return result
+        result = RayPipelineResult(outputs)
+
+        return result
 
 
 class RayPipelineResult(PipelineResult):
-  def __init__(self, named_outputs: Dict[str, ray.data.Dataset]):
-    super(RayPipelineResult, self).__init__(PipelineState.RUNNING)
-    self.named_outputs = named_outputs
+    def __init__(self, named_outputs: Dict[str, ray.data.Dataset]):
+        super(RayPipelineResult, self).__init__(PipelineState.RUNNING)
+        self.named_outputs = named_outputs
 
-  def __del__(self):
-    if self._state == PipelineState.RUNNING:
-      _LOGGER.warning(
-          'The RayPipelineResult is being garbage-collected while the '
-          'RayRunner is still running the corresponding pipeline. This may '
-          'lead to incomplete execution of the pipeline if the main thread '
-          'exits before pipeline completion. Consider using '
-          'result.wait_until_finish() to wait for completion of pipeline '
-          'execution.')
+    def __del__(self):
+        if self._state == PipelineState.RUNNING:
+            _LOGGER.warning(
+                "The RayPipelineResult is being garbage-collected while the "
+                "RayRunner is still running the corresponding pipeline. "
+                "This may lead to incomplete execution of the pipeline if the "
+                "main thread exits before pipeline completion. Consider using "
+                "result.wait_until_finish() to wait for completion of "
+                "pipeline execution.")
 
-  def wait_until_finish(self, duration=None):
-    if not PipelineState.is_terminal(self.state):
-      if duration:
-        raise NotImplementedError(
-            'RayRunner does not support duration argument.')
-      try:
-        objs = list(self.named_outputs.values())
-        ray.wait(objs, num_returns=objs)
-        self._state = PipelineState.DONE
-      except:  # pylint: disable=broad-except
-        self._state = PipelineState.FAILED
-        raise
-    return self._state
+    def wait_until_finish(self, duration=None):
+        if not PipelineState.is_terminal(self.state):
+            if duration:
+                raise NotImplementedError(
+                    "RayRunner does not support duration argument.")
+            try:
+                objs = list(self.named_outputs.values())
+                ray.wait(objs, num_returns=objs)
+                self._state = PipelineState.DONE
+            except Exception:  # pylint: disable=broad-except
+                self._state = PipelineState.FAILED
+                raise
+        return self._state

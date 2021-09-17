@@ -74,13 +74,19 @@ class RayRead(RayDataTranslation):
               side_inputs: Optional[Sequence[ray.data.Dataset]] = None):
         assert ray_ds is None
 
-        original_transform: io.ReadFromText = self.applied_ptransform.transform
+        original_transform: io.Read = self.applied_ptransform.transform
 
         source = original_transform.source
 
         if isinstance(source, io.textio._TextSource):
             filename = source._pattern.value
-            return ray.data.read_text(filename, parallelism=self.parallelism)
+            ray_ds = ray.data.read_text(filename, parallelism=self.parallelism)
+
+            skip_lines = int(source._skip_header_lines)
+            if skip_lines > 0:
+                _, ray_ds = ray_ds.split_at_indices([skip_lines])
+
+            return ray_ds
 
         raise NotImplementedError("Could not read from source:", source)
 
@@ -125,15 +131,29 @@ class RayParDo(RayDataTranslation):
             else:
                 new_args.append(arg)
 
-        def _wrapped_pardo(item):
+        def _wrapped_batch_pardo(batch):
             materialized_args = [
                 convert_pandas(arg) if isinstance(arg, RaySideInput) else arg
                 for arg in new_args
             ]
 
-            return map_fn.process(item, *materialized_args, **kwargs)
+            # Todo: This should happen in a statefule DoFn actor
+            map_fn.setup()
 
-        return ray_ds.flat_map(_wrapped_pardo)
+            map_fn.start_bundle()
+
+            # map_fn.process may return multiple items
+            ret = [
+                i for item in batch
+                for i in map_fn.process(item, *materialized_args, **kwargs)
+            ]
+            map_fn.finish_bundle()
+
+            # Todo: This should happen in a stateful DoFn actor
+            map_fn.teardown()
+            return ret
+
+        return ray_ds.map_batches(_wrapped_batch_pardo)
 
         # Todo: fix value parsing and side input parsing
 

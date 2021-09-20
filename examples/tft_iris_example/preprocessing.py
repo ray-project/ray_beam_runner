@@ -12,7 +12,8 @@ from apache_beam.options.pipeline_options import PipelineOptions
 
 import tensorflow_transform.beam as tft_beam
 from tensorflow_transform.tf_metadata import dataset_metadata
-from tensorflow_transform.tf_metadata import dataset_schema
+# from tensorflow_transform.tf_metadata import dataset_schema
+from tensorflow_transform.tf_metadata import schema_utils
 
 INPUT_FILENAME = 'data/input/input_data.csv'
 OUTPUT_FILENAME = 'data/output/preprocessed_data'
@@ -32,8 +33,7 @@ def create_raw_metadata():
     RAW_DATA_FEATURE_SPEC = dict(listFeatures)
 
     RAW_DATA_METADATA = tft.tf_metadata.dataset_metadata.DatasetMetadata(
-        tft.tf_metadata.dataset_schema.schema_utils.schema_from_feature_spec(
-            RAW_DATA_FEATURE_SPEC))
+        schema_utils.schema_from_feature_spec(RAW_DATA_FEATURE_SPEC))
     return RAW_DATA_METADATA
 
 

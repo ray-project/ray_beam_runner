@@ -4,12 +4,15 @@ import ray.data
 
 from apache_beam import (Create, Union, ParDo, Impulse, PTransform, GroupByKey,
                          WindowInto, Flatten, CoGroupByKey, io)
-from apache_beam.internal.util import ArgumentPlaceholder
+from apache_beam.internal.util import (insert_values_in_args)
 from apache_beam.pipeline import AppliedPTransform, PipelineVisitor
 from apache_beam.portability import common_urns
 from apache_beam.pvalue import PBegin, TaggedOutput
 from apache_beam.runners.common import MethodWrapper
+from ray.data.block import Block, BlockMetadata, BlockAccessor
+
 from ray_beam_runner.collection import CollectionMap
+from ray_beam_runner.custom_actor_pool import CustomActorPool
 from ray_beam_runner.overrides import (_Create, _Read, _Reshuffle)
 from ray_beam_runner.side_input import (RaySideInput, RayMultiMapSideInput,
                                         RayListSideInput, RayDictSideInput)
@@ -123,37 +126,63 @@ class RayParDo(RayDataTranslation):
             df = ray.get(ray_side_input.ray_ds.to_pandas())[0]
             return ray_side_input.convert_df(df)
 
-        # Replace args
-        new_args = []
-        for arg in args:
-            if isinstance(arg, ArgumentPlaceholder):
-                new_args.append(side_inputs.pop(0))
-            else:
-                new_args.append(arg)
+        args, kwargs = insert_values_in_args(args, kwargs, side_inputs)
 
-        def _wrapped_batch_pardo(batch):
-            materialized_args = [
-                convert_pandas(arg) if isinstance(arg, RaySideInput) else arg
-                for arg in new_args
-            ]
+        class RayDoFnWorker(object):
+            def __init__(self):
+                self._is_setup = False
 
-            # Todo: This should happen in a statefule DoFn actor
-            map_fn.setup()
+                self._materialized_args = [
+                    convert_pandas(arg)
+                    if isinstance(arg, RaySideInput) else arg for arg in args
+                ]
+                self._materialized_kwargs = {
+                    key: convert_pandas(val)
+                    if isinstance(val, RaySideInput) else val
+                    for key, val in kwargs.items()
+                }
 
-            map_fn.start_bundle()
+            def __del__(self):
+                map_fn.teardown()
 
-            # map_fn.process may return multiple items
-            ret = [
-                i for item in batch
-                for i in map_fn.process(item, *materialized_args, **kwargs)
-            ]
-            map_fn.finish_bundle()
+            def ready(self):
+                return "ok"
 
-            # Todo: This should happen in a stateful DoFn actor
-            map_fn.teardown()
-            return ret
+            def process_batch(self, batch):
+                map_fn.start_bundle()
 
-        return ray_ds.map_batches(_wrapped_batch_pardo)
+                # map_fn.process may return multiple items
+                ret = [
+                    output_item for input_item in batch
+                    for output_item in map_fn.process(
+                        input_item, *self._materialized_args, **
+                        self._materialized_kwargs)
+                ]
+
+                map_fn.finish_bundle()
+                return ret
+
+            @ray.method(num_returns=2)
+            def process_block(self, block: Block,
+                              meta: BlockMetadata) -> (Block, BlockMetadata):
+                if not self._is_setup:
+                    map_fn.setup()
+                    self._is_setup = True
+
+                new_block = self.process_batch(block)
+                accessor = BlockAccessor.for_block(new_block)
+                new_metadata = BlockMetadata(
+                    num_rows=accessor.num_rows(),
+                    size_bytes=accessor.size_bytes(),
+                    schema=accessor.schema(),
+                    input_files=meta.input_files)
+                return new_block, new_metadata
+
+        # The lambda fn is ignored as the RayDoFnWorker encapsulates the
+        # actual logic in self.process_batch
+        return ray_ds.map_batches(
+            lambda batch: batch,
+            compute=CustomActorPool(worker_cls=RayDoFnWorker))
 
         # Todo: fix value parsing and side input parsing
 
@@ -340,7 +369,7 @@ class TranslationExecutor(PipelineVisitor):
             if len(ray_ds) == 1:
                 ray_ds = list(ray_ds.values())[0]
 
-        side_inputs = []
+        ray_side_inputs = []
         for side_input in applied_ptransform.side_inputs:
             side_ds = self._collection_map.get(side_input.pvalue)
             input_data = side_input._side_input_data()
@@ -354,18 +383,18 @@ class TranslationExecutor(PipelineVisitor):
             else:
                 wrapped_input = RaySideInput(side_ds)
 
-            side_inputs.append(wrapped_input)
+            ray_side_inputs.append(wrapped_input)
 
-        import ray
-        print(
-            "APPLYING", applied_ptransform.full_label,
-            ray.get(ray_ds.to_pandas())
-            if isinstance(ray_ds, ray.data.Dataset) else ray_ds)
-        result = translation.apply(ray_ds, side_inputs=side_inputs)
-        print(
-            "RESULT",
-            ray.get(result.to_pandas())
-            if isinstance(result, ray.data.Dataset) else result)
+        # print(
+        #     "APPLYING", applied_ptransform.full_label,
+        #     ray.get(ray_ds.to_pandas())
+        #     if isinstance(ray_ds, ray.data.Dataset) else ray_ds)
+        print("APPLYING", applied_ptransform.full_label, ray_ds)
+        result = translation.apply(ray_ds, side_inputs=ray_side_inputs)
+        # print(
+        #     "RESULT",
+        #     ray.get(result.to_pandas())
+        #     if isinstance(result, ray.data.Dataset) else result)
 
         for name, element in applied_ptransform.named_outputs().items():
             if isinstance(result, dict):

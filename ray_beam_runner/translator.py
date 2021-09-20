@@ -15,7 +15,7 @@ from ray_beam_runner.collection import CollectionMap
 from ray_beam_runner.custom_actor_pool import CustomActorPool
 from ray_beam_runner.overrides import (_Create, _Read, _Reshuffle)
 from ray_beam_runner.side_input import (RaySideInput, RayMultiMapSideInput,
-                                        RayListSideInput, RayDictSideInput)
+                                        RayIterableSideInput)
 from ray_beam_runner.util import group_by_key
 from apache_beam.transforms.window import WindowFn, TimestampedValue
 from apache_beam.typehints import Optional
@@ -375,13 +375,14 @@ class TranslationExecutor(PipelineVisitor):
             input_data = side_input._side_input_data()
             if (input_data.access_pattern ==
                     common_urns.side_inputs.MULTIMAP.urn):
-                wrapped_input = RayMultiMapSideInput(side_ds)
-            elif input_data.view_fn == list:
-                wrapped_input = RayListSideInput(side_ds)
-            elif input_data.view_fn == dict:
-                wrapped_input = RayDictSideInput(side_ds)
+                wrapped_input = RayMultiMapSideInput(side_ds, input_data.view_fn)
+            elif (input_data.access_pattern ==
+                    common_urns.side_inputs.ITERABLE.urn):
+                wrapped_input = RayIterableSideInput(side_ds, input_data.view_fn)
             else:
-                wrapped_input = RaySideInput(side_ds)
+                raise RuntimeError(
+                    f"Unknown side input access pattern: "
+                    f"{input_data.access_pattern}")
 
             ray_side_inputs.append(wrapped_input)
 

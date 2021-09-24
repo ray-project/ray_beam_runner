@@ -2,6 +2,7 @@ import tempfile
 
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
+from apache_beam.runners.direct import DirectRunner
 import tensorflow_transform.beam as tft_beam
 
 from ray_beam_runner.ray_runner import RayRunner
@@ -19,9 +20,13 @@ OUTPUT_TRANSFORM_FUNCTION_FOLDER = "tft_iris_example/" \
 def run_transformation_pipeline(raw_input_location, transformed_data_location,
                                 transform_artefact_location):
     pipeline_options = PipelineOptions(["--parallelism=1"])
+    runner_cls = RayRunner
+
+    # pipeline_options = PipelineOptions()
+    # runner_cls = DirectRunner
 
     with beam.Pipeline(
-            runner=RayRunner(), options=pipeline_options) as pipeline:
+            runner=runner_cls(), options=pipeline_options) as pipeline:
         with tft_beam.Context(temp_dir=tempfile.mkdtemp()):
             raw_data = (pipeline | beam.io.ReadFromText(
                 raw_input_location, skip_header_lines=1)

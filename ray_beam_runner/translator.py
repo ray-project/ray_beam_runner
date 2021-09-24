@@ -242,6 +242,8 @@ class RayGroupByKey(RayDataTranslation):
 
         # Todo: Assert WindowedValue?
 
+        # ray_ds.random_shuffle()
+
         df = ray.get(ray_ds.to_pandas())[0]
         grouped = group_by_key(df)
 

@@ -9,18 +9,16 @@ class RaySideInput(object):
         self.ray_ds = ray_ds
         self.convert_fn = convert_fn
 
-    def convert_df(self, df: pd.DataFrame):
+    def convert(self):
         raise NotImplementedError
 
 
 class RayIterableSideInput(RaySideInput):
-    def convert_df(self, df: pd.DataFrame):
-        def _native(np_item):
-            return np_item.item() if len(np_item) <= 1 else tuple(np_item)
-
-        return self.convert_fn([_native(row) for row in df.to_numpy()])
+    def convert(self):
+        return self.convert_fn(self.ray_ds.iter_rows())
 
 
 class RayMultiMapSideInput(RaySideInput):
-    def convert_df(self, df: pd.DataFrame):
+    def convert(self):
+        df = ray.get(self.ray_ds.to_pandas())
         return group_by_key(df)

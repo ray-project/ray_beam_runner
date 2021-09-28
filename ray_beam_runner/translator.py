@@ -13,7 +13,7 @@ from ray.data.block import Block, BlockMetadata, BlockAccessor
 
 from ray_beam_runner.collection import CollectionMap
 from ray_beam_runner.custom_actor_pool import CustomActorPool
-from ray_beam_runner.overrides import (_Create, _Read, _Reshuffle)
+from ray_beam_runner.overrides import (_Create, _Read, _Reshuffle, _Write)
 from ray_beam_runner.side_input import (RaySideInput, RayMultiMapSideInput,
                                         RayIterableSideInput)
 from ray_beam_runner.util import group_by_key
@@ -77,7 +77,7 @@ class RayRead(RayDataTranslation):
               side_inputs: Optional[Sequence[ray.data.Dataset]] = None):
         assert ray_ds is None
 
-        original_transform: io.Read = self.applied_ptransform.transform
+        original_transform: _Read = self.applied_ptransform.transform
 
         source = original_transform.source
 
@@ -88,6 +88,29 @@ class RayRead(RayDataTranslation):
             skip_lines = int(source._skip_header_lines)
             if skip_lines > 0:
                 _, ray_ds = ray_ds.split_at_indices([skip_lines])
+
+            return ray_ds
+
+        raise NotImplementedError("Could not read from source:", source)
+
+
+class RayWrite(RayDataTranslation):
+    def apply(self,
+              ray_ds: Union[None, ray.data.Dataset, Mapping[
+                  str, ray.data.Dataset]] = None,
+              side_inputs: Optional[Sequence[ray.data.Dataset]] = None):
+        assert ray_ds is None
+
+        original_transform: _Write = self.applied_ptransform.transform
+
+        sink = original_transform.sink
+
+        print("GOT WRITE", ray_ds, side_inputs)
+
+        if isinstance(sink, io.textio._TextSink):
+            filename = sink._pattern.value
+            ray_ds: ray.data.Dataset
+            ray_ds.write_csv(filename)
 
             return ray_ds
 
@@ -119,13 +142,6 @@ class RayParDo(RayDataTranslation):
         args = transform.args or []
         kwargs = transform.kwargs or {}
 
-        # Todo: datasets are not iterable, so we fetch pandas dfs here
-        # This is a ray get anti-pattern! This will not scale to
-        # either many side inputs or to large dataset sizes. Fix this!
-        def convert_pandas(ray_side_input: RaySideInput):
-            df = ray.get(ray_side_input.ray_ds.to_pandas())[0]
-            return ray_side_input.convert_df(df)
-
         args, kwargs = insert_values_in_args(args, kwargs, side_inputs)
 
         class RayDoFnWorker(object):
@@ -133,11 +149,11 @@ class RayParDo(RayDataTranslation):
                 self._is_setup = False
 
                 self._materialized_args = [
-                    convert_pandas(arg)
+                    arg.convert()
                     if isinstance(arg, RaySideInput) else arg for arg in args
                 ]
                 self._materialized_kwargs = {
-                    key: convert_pandas(val)
+                    key: val.convert()
                     if isinstance(val, RaySideInput) else val
                     for key, val in kwargs.items()
                 }
@@ -156,7 +172,7 @@ class RayParDo(RayDataTranslation):
                     output_item for input_item in batch
                     for output_item in map_fn.process(
                         input_item, *self._materialized_args, **
-                        self._materialized_kwargs)
+                        self._materialized_kwargs) or [[]]
                 ]
 
                 map_fn.finish_bundle()
@@ -388,16 +404,30 @@ class TranslationExecutor(PipelineVisitor):
 
             ray_side_inputs.append(wrapped_input)
 
-        # print(
-        #     "APPLYING", applied_ptransform.full_label,
-        #     ray.get(ray_ds.to_pandas())
-        #     if isinstance(ray_ds, ray.data.Dataset) else ray_ds)
-        print("APPLYING", applied_ptransform.full_label, ray_ds)
+        def _visualize(ray_ds_dict):
+            for name, ray_ds in ray_ds_dict.items():
+                if not ray_ds:
+                    out = ray_ds
+                else:
+                    out = ray.get(ray_ds.to_numpy())
+                print("DATA", name, out)
+                continue
+
+        def _visualize_all(ray_ds):
+            if isinstance(ray_ds, ray.data.Dataset) or not ray_ds:
+                _visualize({"_main": ray_ds})
+            elif isinstance(ray_ds, list):
+                _visualize((dict(enumerate(ray_ds))))
+            else:
+                _visualize(ray_ds)
+
+        print("APPLYING", applied_ptransform.full_label)
+        _visualize_all(ray_ds)
+        _visualize_all([si.ray_ds for si in ray_side_inputs])
         result = translation.apply(ray_ds, side_inputs=ray_side_inputs)
-        # print(
-        #     "RESULT",
-        #     ray.get(result.to_pandas())
-        #     if isinstance(result, ray.data.Dataset) else result)
+        print("RESULT", applied_ptransform.full_label)
+        _visualize_all(result)
+        print("-"*80)
 
         for name, element in applied_ptransform.named_outputs().items():
             if isinstance(result, dict):

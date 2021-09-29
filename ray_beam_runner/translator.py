@@ -172,7 +172,6 @@ class RayParDo(RayDataTranslation):
                     output = TaggedOutput(self.tag, windowed_value)
                 else:
                     output = windowed_value
-                print("APPENDING", self.tag, output)
                 self.values.append(output)
 
         # We might want to have separate receivers at some point
@@ -222,13 +221,16 @@ class RayParDo(RayDataTranslation):
                     bundle_finalizer_param=self.bundle_finalizer_param)
 
             def __del__(self):
-                # self.do_fn_invoker.invoke_teardown()
-                pass
+                self.do_fn_invoker.invoke_teardown()
 
             def ready(self):
                 return "ok"
 
             def process_batch(self, batch):
+                if not self._is_setup:
+                    self.do_fn_invoker.invoke_setup()
+                    self._is_setup = True
+
                 self.do_fn_invoker.invoke_start_bundle()
 
                 # Clear return list
@@ -261,6 +263,54 @@ class RayParDo(RayDataTranslation):
                     input_files=meta.input_files)
                 return new_block, new_metadata
 
+        def simple_batch_dofn(batch):
+            context = DoFnContext(label, state=None)
+            bundle_finalizer_param = DoFn.BundleFinalizerParam()
+            do_fn_signature = DoFnSignature(map_fn)
+
+            values = []
+
+            tagged_receivers = OneReceiver(values)
+
+            output_processor = _OutputProcessor(
+                window_fn=window_fn,
+                main_receivers=tagged_receivers[None],
+                tagged_receivers=tagged_receivers,
+                per_element_output_counter=None,
+            )
+
+            do_fn_invoker = DoFnInvoker.create_invoker(
+                do_fn_signature,
+                output_processor,
+                context,
+                side_inputs,
+                args,
+                kwargs,
+                user_state_context=None,
+                bundle_finalizer_param=bundle_finalizer_param)
+
+            # Invoke setup just in case
+            do_fn_invoker.invoke_setup()
+            do_fn_invoker.invoke_start_bundle()
+
+            for input_item in batch:
+                windowed_value = get_windowed_value(input_item, window_fn)
+                do_fn_invoker.invoke_process(windowed_value)
+
+            # map_fn.process may return multiple items
+            ret = list(values)
+
+            do_fn_invoker.invoke_finish_bundle()
+            # Invoke teardown just in case
+            do_fn_invoker.invoke_teardown()
+            return ret
+
+        # Todo: implement
+        dofn_has_no_setup_or_teardown = True
+
+        if dofn_has_no_setup_or_teardown:
+            return ray_ds.map_batches(simple_batch_dofn)
+
         # The lambda fn is ignored as the RayDoFnWorker encapsulates the
         # actual logic in self.process_batch
         return ray_ds.map_batches(
@@ -282,7 +332,7 @@ class RayGroupByKey(RayDataTranslation):
 
         grouped = group_by_key(ray_ds)
 
-        return ray.data.from_items(list(grouped.items()))
+        return ray.data.from_items(list(grouped.items()) if grouped else [{}])
 
 
 class RayWindowInto(RayDataTranslation):
@@ -416,6 +466,8 @@ class TranslationExecutor(PipelineVisitor):
             for name, ray_ds in ray_ds_dict.items():
                 if not ray_ds:
                     out = ray_ds
+                elif not isinstance(ray_ds, ray.data.Dataset):
+                    out = ray_ds
                 else:
                     out = ray.get(ray_ds.to_numpy())
                 print(("DATA", name, out))
@@ -429,15 +481,19 @@ class TranslationExecutor(PipelineVisitor):
             else:
                 _visualize(ray_ds)
 
-        # print("APPLYING", applied_ptransform.full_label)
-        # print("MAIN INPUT")
-        # _visualize_all(ray_ds)
-        # print("SIDE INPUTS")
-        # _visualize_all([list(si._iterable) for si in side_inputs])
+        print("-" * 80)
+        print("APPLYING", applied_ptransform.full_label)
+        print("-" * 80)
+        print("MAIN INPUT")
+        _visualize_all(ray_ds)
+        print("SIDE INPUTS")
+        _visualize_all([list(si._iterable) for si in side_inputs])
+        print("." * 40)
         result = translation.apply(ray_ds, side_inputs=side_inputs)
-        # print("RESULT", applied_ptransform.full_label)
-        # _visualize_all(result)
-        # print("-"*80)
+        print("." * 40)
+        print("RESULT", applied_ptransform.full_label)
+        _visualize_all(result)
+        print("-" * 80)
 
         for name, element in applied_ptransform.named_outputs().items():
             if isinstance(result, dict):

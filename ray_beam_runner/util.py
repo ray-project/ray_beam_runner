@@ -25,6 +25,8 @@ def group_by_key(ray_ds: ray.data.Dataset):
 
     # part[0] is the key
     # part[1][1] returns the (windowed) value
+    if df.empty:
+        return {}
+
     groups = {part[0]: list(part[1][1]) for part in df.groupby(0, sort=False)}
-    print("GOT GROUPS", groups)
     return groups

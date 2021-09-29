@@ -33,7 +33,8 @@ from typing import Any
 from typing import Tuple
 
 import hamcrest  # pylint: disable=ungrouped-imports
-from apache_beam.runners.portability.fn_api_runner.fn_runner_test import ExpandStringsProvider
+from apache_beam.runners.portability.fn_api_runner.fn_runner_test import \
+    ExpandStringsProvider, CustomMergingWindowFn
 from hamcrest.core.matcher import Matcher
 
 import apache_beam as beam

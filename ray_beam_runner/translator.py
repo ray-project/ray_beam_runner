@@ -2,25 +2,40 @@ from typing import Mapping, Sequence
 
 import ray.data
 
-from apache_beam import (Create, Union, ParDo, Impulse, PTransform, GroupByKey,
-                         WindowInto, Flatten, CoGroupByKey, io)
-from apache_beam.internal.util import (insert_values_in_args)
+from apache_beam import (Create, Union, ParDo, Impulse, PTransform, WindowInto,
+                         Flatten, io, DoFn)
 from apache_beam.pipeline import AppliedPTransform, PipelineVisitor
-from apache_beam.portability import common_urns
 from apache_beam.pvalue import PBegin, TaggedOutput
-from apache_beam.runners.common import MethodWrapper
+from apache_beam.runners.common import DoFnInvoker, \
+    DoFnSignature, DoFnContext, Receiver, _OutputProcessor
+from apache_beam.transforms.sideinputs import SideInputMap
 from ray.data.block import Block, BlockMetadata, BlockAccessor
 
 from ray_beam_runner.collection import CollectionMap
 from ray_beam_runner.custom_actor_pool import CustomActorPool
-from ray_beam_runner.overrides import (_Create, _Read, _Reshuffle, _Write)
-from ray_beam_runner.side_input import (RaySideInput, RayMultiMapSideInput,
-                                        RayIterableSideInput)
+from ray_beam_runner.overrides import (_Create, _Read, _Reshuffle, _Write,
+                                       _GroupByKeyOnly, _GroupAlsoByWindow)
 from ray_beam_runner.util import group_by_key
-from apache_beam.transforms.window import WindowFn, TimestampedValue
+from apache_beam.transforms.window import WindowFn, TimestampedValue, \
+    GlobalWindow
 from apache_beam.typehints import Optional
-from apache_beam.utils.timestamp import Timestamp
 from apache_beam.utils.windowed_value import WindowedValue
+
+
+def get_windowed_value(input_item, window_fn: WindowFn):
+    if isinstance(input_item, TaggedOutput):
+        input_item = input_item.value
+    if isinstance(input_item, WindowedValue):
+        windowed_value = input_item
+    elif isinstance(input_item, TimestampedValue):
+        assign_context = WindowFn.AssignContext(input_item.timestamp,
+                                                input_item.value)
+        windowed_value = WindowedValue(input_item.value, input_item.timestamp,
+                                       window_fn.assign(assign_context))
+    else:
+        windowed_value = WindowedValue(input_item, 0, (GlobalWindow(), ))
+
+    return windowed_value
 
 
 class RayDataTranslation(object):
@@ -114,7 +129,7 @@ class RayWrite(RayDataTranslation):
 
             return ray_ds
 
-        raise NotImplementedError("Could not read from source:", source)
+        raise NotImplementedError("Could not write to sink:", sink)
 
 
 class RayReshuffle(RayDataTranslation):
@@ -138,44 +153,96 @@ class RayParDo(RayDataTranslation):
 
         # Get original function and side inputs
         transform = self.applied_ptransform.transform
+        label = transform.label
         map_fn = transform.fn
         args = transform.args or []
         kwargs = transform.kwargs or {}
 
-        args, kwargs = insert_values_in_args(args, kwargs, side_inputs)
+        main_input = list(self.applied_ptransform.main_inputs.values())[0]
+        window_fn = main_input.windowing.windowfn if hasattr(
+            main_input, "windowing") else None
+
+        class TaggingReceiver(Receiver):
+            def __init__(self, tag, values):
+                self.tag = tag
+                self.values = values
+
+            def receive(self, windowed_value):
+                if self.tag:
+                    output = TaggedOutput(self.tag, windowed_value)
+                else:
+                    output = windowed_value
+                print("APPENDING", self.tag, output)
+                self.values.append(output)
+
+        # We might want to have separate receivers at some point
+        # For now, collect everything in one list and filter afterwards
+        # class TaggedReceivers(dict):
+        #     def __missing__(self, tag):
+        #         self[tag] = receiver = SimpleReceiver()
+        #         return receiver
+
+        class OneReceiver(dict):
+            def __init__(self, values):
+                self.values = values
+
+            def __missing__(self, key):
+                if key not in self:
+                    self[key] = TaggingReceiver(key, self.values)
+                return self[key]
 
         class RayDoFnWorker(object):
             def __init__(self):
                 self._is_setup = False
 
-                self._materialized_args = [
-                    arg.convert()
-                    if isinstance(arg, RaySideInput) else arg for arg in args
-                ]
-                self._materialized_kwargs = {
-                    key: val.convert()
-                    if isinstance(val, RaySideInput) else val
-                    for key, val in kwargs.items()
-                }
+                self.context = DoFnContext(label, state=None)
+                self.bundle_finalizer_param = DoFn.BundleFinalizerParam()
+                do_fn_signature = DoFnSignature(map_fn)
+
+                self.values = []
+
+                self.tagged_receivers = OneReceiver(self.values)
+                self.window_fn = window_fn
+
+                output_processor = _OutputProcessor(
+                    window_fn=self.window_fn,
+                    main_receivers=self.tagged_receivers[None],
+                    tagged_receivers=self.tagged_receivers,
+                    per_element_output_counter=None,
+                )
+
+                self.do_fn_invoker = DoFnInvoker.create_invoker(
+                    do_fn_signature,
+                    output_processor,
+                    self.context,
+                    side_inputs,
+                    args,
+                    kwargs,
+                    user_state_context=None,
+                    bundle_finalizer_param=self.bundle_finalizer_param)
 
             def __del__(self):
-                map_fn.teardown()
+                # self.do_fn_invoker.invoke_teardown()
+                pass
 
             def ready(self):
                 return "ok"
 
             def process_batch(self, batch):
-                map_fn.start_bundle()
+                self.do_fn_invoker.invoke_start_bundle()
+
+                # Clear return list
+                self.values.clear()
+
+                for input_item in batch:
+                    windowed_value = get_windowed_value(
+                        input_item, self.window_fn)
+                    self.do_fn_invoker.invoke_process(windowed_value)
 
                 # map_fn.process may return multiple items
-                ret = [
-                    output_item for input_item in batch
-                    for output_item in map_fn.process(
-                        input_item, *self._materialized_args, **
-                        self._materialized_kwargs) or [[]]
-                ]
+                ret = list(self.values)
 
-                map_fn.finish_bundle()
+                self.do_fn_invoker.invoke_finish_bundle()
                 return ret
 
             @ray.method(num_returns=2)
@@ -200,53 +267,6 @@ class RayParDo(RayDataTranslation):
             lambda batch: batch,
             compute=CustomActorPool(worker_cls=RayDoFnWorker))
 
-        # Todo: fix value parsing and side input parsing
-
-        method = MethodWrapper(map_fn, "process")
-
-        def get_item_attributes(item):
-            if isinstance(item, tuple):
-                key, value = item
-            else:
-                key = None
-                value = item
-
-            if isinstance(value, WindowedValue):
-                timestamp = value.timestamp
-                window = value.windows[0]
-                elem = value.value
-            else:
-                timestamp = None
-                window = None
-                elem = value
-
-            return elem, key, timestamp, window
-
-        def execute(item):
-            elem, key, timestamp, window = get_item_attributes(item)
-
-            kwargs = {}
-            # if method.has_userstate_arguments:
-            #   for kw, state_spec in method.state_args_to_replace.items():
-            #     kwargs[kw] = user_state_context.get_state(
-            #       state_spec, key, window)
-            #   for kw, timer_spec in method.timer_args_to_replace.items():
-            #     kwargs[kw] = user_state_context.get_timer(
-            #       timer_spec, key, window, timestamp, pane_info)
-
-            if method.timestamp_arg_name:
-                kwargs[method.timestamp_arg_name] = Timestamp.of(timestamp)
-            if method.window_arg_name:
-                kwargs[method.window_arg_name] = window
-            if method.key_arg_name:
-                kwargs[method.key_arg_name] = key
-            # if method.dynamic_timer_tag_arg_name:
-            #   kwargs[method.dynamic_timer_tag_arg_name] = dynamic_timer_tag
-
-            return method.method_value(elem, *new_args, **kwargs)
-
-        return ray_ds.flat_map(execute)
-
 
 class RayGroupByKey(RayDataTranslation):
     def apply(self,
@@ -260,23 +280,9 @@ class RayGroupByKey(RayDataTranslation):
 
         # ray_ds.random_shuffle()
 
-        df = ray.get(ray_ds.to_pandas())[0]
-        grouped = group_by_key(df)
+        grouped = group_by_key(ray_ds)
 
         return ray.data.from_items(list(grouped.items()))
-
-
-class RayCoGroupByKey(RayDataTranslation):
-    def apply(self,
-              ray_ds: Union[None, ray.data.Dataset, Mapping[
-                  str, ray.data.Dataset]] = None,
-              side_inputs: Optional[Sequence[ray.data.Dataset]] = None):
-        assert ray_ds is not None
-        assert isinstance(ray_ds, ray.data.Dataset)
-
-        raise RuntimeError("CoGroupByKey")
-
-        return group_by_key(ray.get(ray_ds.to_pandas()[0]))
 
 
 class RayWindowInto(RayDataTranslation):
@@ -325,9 +331,10 @@ translations = {
     _Reshuffle: RayReshuffle,
     ParDo: RayParDo,
     Flatten: RayFlatten,
-    WindowInto: RayNoop,  # RayWindowInto,
-    GroupByKey: RayGroupByKey,
-    CoGroupByKey: RayCoGroupByKey,
+    WindowInto: RayParDo,  # RayWindowInto,
+    _GroupByKeyOnly: RayGroupByKey,
+    _GroupAlsoByWindow: RayParDo,
+    # CoGroupByKey: RayCoGroupByKey,
     PTransform: RayNoop  # Todo: How to handle generic ptransforms? Map?
 }
 
@@ -387,22 +394,23 @@ class TranslationExecutor(PipelineVisitor):
             if len(ray_ds) == 1:
                 ray_ds = list(ray_ds.values())[0]
 
-        ray_side_inputs = []
+        class RayDatasetAccessor(object):
+            def __init__(self, ray_ds: ray.data.Dataset, window_fn: WindowFn):
+                self.ray_ds = ray_ds
+                self.window_fn = window_fn
+
+            def __iter__(self):
+                for row in self.ray_ds.iter_rows():
+                    yield get_windowed_value(row, self.window_fn)
+
+        side_inputs = []
         for side_input in applied_ptransform.side_inputs:
             side_ds = self._collection_map.get(side_input.pvalue)
-            input_data = side_input._side_input_data()
-            if (input_data.access_pattern ==
-                    common_urns.side_inputs.MULTIMAP.urn):
-                wrapped_input = RayMultiMapSideInput(side_ds, input_data.view_fn)
-            elif (input_data.access_pattern ==
-                    common_urns.side_inputs.ITERABLE.urn):
-                wrapped_input = RayIterableSideInput(side_ds, input_data.view_fn)
-            else:
-                raise RuntimeError(
-                    f"Unknown side input access pattern: "
-                    f"{input_data.access_pattern}")
-
-            ray_side_inputs.append(wrapped_input)
+            side_inputs.append(
+                SideInputMap(
+                    type(side_input), side_input._view_options(),
+                    RayDatasetAccessor(side_ds,
+                                       side_input._window_mapping_fn)))
 
         def _visualize(ray_ds_dict):
             for name, ray_ds in ray_ds_dict.items():
@@ -410,7 +418,7 @@ class TranslationExecutor(PipelineVisitor):
                     out = ray_ds
                 else:
                     out = ray.get(ray_ds.to_numpy())
-                print("DATA", name, out)
+                print(("DATA", name, out))
                 continue
 
         def _visualize_all(ray_ds):
@@ -421,13 +429,15 @@ class TranslationExecutor(PipelineVisitor):
             else:
                 _visualize(ray_ds)
 
-        print("APPLYING", applied_ptransform.full_label)
-        _visualize_all(ray_ds)
-        _visualize_all([si.ray_ds for si in ray_side_inputs])
-        result = translation.apply(ray_ds, side_inputs=ray_side_inputs)
-        print("RESULT", applied_ptransform.full_label)
-        _visualize_all(result)
-        print("-"*80)
+        # print("APPLYING", applied_ptransform.full_label)
+        # print("MAIN INPUT")
+        # _visualize_all(ray_ds)
+        # print("SIDE INPUTS")
+        # _visualize_all([list(si._iterable) for si in side_inputs])
+        result = translation.apply(ray_ds, side_inputs=side_inputs)
+        # print("RESULT", applied_ptransform.full_label)
+        # _visualize_all(result)
+        # print("-"*80)
 
         for name, element in applied_ptransform.named_outputs().items():
             if isinstance(result, dict):

@@ -297,12 +297,14 @@ class RayParDo(RayDataTranslation):
                 windowed_value = get_windowed_value(input_item, window_fn)
                 do_fn_invoker.invoke_process(windowed_value)
 
-            # map_fn.process may return multiple items
-            ret = list(values)
-
             do_fn_invoker.invoke_finish_bundle()
             # Invoke teardown just in case
             do_fn_invoker.invoke_teardown()
+
+            # This has to happen last as we might receive results
+            # in invoke_finish_bundle() or invoke_teardown()
+            ret = list(values)
+
             return ret
 
         # Todo: implement

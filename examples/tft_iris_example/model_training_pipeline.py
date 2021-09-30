@@ -8,11 +8,15 @@ from tensorflow.keras.layers import Input, Dense
 from tensorflow.keras import Model
 
 # VARIANT = "with_actors"
-VARIANT = "with_tasks"
+# VARIANT = "with_tasks"
 # VARIANT = "with_directrunner"
+VARIANT = "."
 
 TFT_OUTPUT_DIRECTORY = f"data/output/{VARIANT}/transform_artfcts/"
 TFRECORD_PATH = f"data/output/{VARIANT}/preprocessed_data/"
+
+np.random.seed(1234)
+tf.random.set_seed(1234)
 
 
 def _parse_function(proto, fs):
@@ -110,6 +114,6 @@ class MyModel(tf.keras.Model):
 
 myModel = MyModel(model, TFT_OUTPUT_DIRECTORY)
 
-myModel.predict(input_args)
+print(myModel.predict(input_args))
 
 myModel.save(f"data/output/{VARIANT}/saved_model")

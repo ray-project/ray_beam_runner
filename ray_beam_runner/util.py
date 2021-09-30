@@ -13,20 +13,15 @@ def group_by_key(ray_ds: ray.data.Dataset):
 
         # Extract key from windowed value
         key, value = windowed_value.value
+
         # We convert to strings here to support void keys
         key = str(key) if key is None else key
-
         df = df.append([[key, value]])
 
-        # for i, window in enumerate(windowed_value.windows):
-        #     group_key = (key, window)
-        #     print("GROUP KEY", group_key, value)
-        #     df = df.append([[group_key, value]])
-
-    # part[0] is the key
-    # part[1][1] returns the (windowed) value
     if df.empty:
         return {}
 
+    # part[0] is the key
+    # part[1][1] returns the (windowed) value
     groups = {part[0]: list(part[1][1]) for part in df.groupby(0, sort=False)}
     return groups

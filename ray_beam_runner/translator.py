@@ -13,7 +13,7 @@ from ray.data.block import Block, BlockMetadata, BlockAccessor
 
 from ray_beam_runner.collection import CollectionMap
 from ray_beam_runner.custom_actor_pool import CustomActorPool
-from ray_beam_runner.overrides import (_Create, _Read, _Reshuffle, _Write,
+from ray_beam_runner.overrides import (_Create, _Read, _Reshuffle,
                                        _GroupByKeyOnly, _GroupAlsoByWindow)
 from ray_beam_runner.util import group_by_key
 from apache_beam.transforms.window import WindowFn, TimestampedValue, \
@@ -107,29 +107,6 @@ class RayRead(RayDataTranslation):
             return ray_ds
 
         raise NotImplementedError("Could not read from source:", source)
-
-
-class RayWrite(RayDataTranslation):
-    def apply(self,
-              ray_ds: Union[None, ray.data.Dataset, Mapping[
-                  str, ray.data.Dataset]] = None,
-              side_inputs: Optional[Sequence[ray.data.Dataset]] = None):
-        assert ray_ds is None
-
-        original_transform: _Write = self.applied_ptransform.transform
-
-        sink = original_transform.sink
-
-        print("GOT WRITE", ray_ds, side_inputs)
-
-        if isinstance(sink, io.textio._TextSink):
-            filename = sink._pattern.value
-            ray_ds: ray.data.Dataset
-            ray_ds.write_csv(filename)
-
-            return ray_ds
-
-        raise NotImplementedError("Could not write to sink:", sink)
 
 
 class RayReshuffle(RayDataTranslation):
@@ -241,10 +218,10 @@ class RayParDo(RayDataTranslation):
                         input_item, self.window_fn)
                     self.do_fn_invoker.invoke_process(windowed_value)
 
+                self.do_fn_invoker.invoke_finish_bundle()
+
                 # map_fn.process may return multiple items
                 ret = list(self.values)
-
-                self.do_fn_invoker.invoke_finish_bundle()
                 return ret
 
             @ray.method(num_returns=2)
@@ -327,10 +304,6 @@ class RayGroupByKey(RayDataTranslation):
               side_inputs: Optional[Sequence[ray.data.Dataset]] = None):
         assert ray_ds is not None
         assert isinstance(ray_ds, ray.data.Dataset)
-
-        # Todo: Assert WindowedValue?
-
-        # ray_ds.random_shuffle()
 
         grouped = group_by_key(ray_ds)
 

@@ -3,7 +3,6 @@ import typing
 from apache_beam import (pvalue, PTransform, Create, Reshuffle, Windowing,
                          GroupByKey, ParDo)
 from apache_beam.io import Read
-from apache_beam.io.iobase import Write
 from apache_beam.pipeline import PTransformOverride
 from apache_beam.runners.direct.direct_runner import _GroupAlsoByWindowDoFn
 from apache_beam.transforms.window import GlobalWindows
@@ -36,14 +35,6 @@ class _Reshuffle(PTransform):
 class _Read(PTransform):
     def __init__(self, source):
         self.source = source
-
-    def expand(self, input_or_inputs):
-        return pvalue.PCollection.from_(input_or_inputs)
-
-
-class _Write(PTransform):
-    def __init__(self, sink):
-        self.sink = sink
 
     def expand(self, input_or_inputs):
         return pvalue.PCollection.from_(input_or_inputs)
@@ -114,24 +105,6 @@ def _get_overrides() -> List[PTransformOverride]:
             transform = _Read(applied_ptransform.transform.source)
             return transform
 
-    class WriteOverride(PTransformOverride):
-        def matches(self, applied_ptransform):
-
-            # # TODO NEXT: Write is not called!
-            # print(applied_ptransform.full_label,
-            #       applied_ptransform.transform.__class__,
-            #       type(applied_ptransform.transform),
-            #       applied_ptransform.transform.__class__ == Write,
-            #       isinstance(applied_ptransform.transform, Write))
-
-            return applied_ptransform.transform.__class__ == Write
-
-        def get_replacement_transform_for_applied_ptransform(
-                self, applied_ptransform):
-            # Use specialized streaming implementation.
-            transform = _Write(applied_ptransform.transform.sink)
-            return transform
-
     class GroupByKeyOverride(PTransformOverride):
         def matches(self, applied_ptransform):
             return applied_ptransform.transform.__class__ == GroupByKey
@@ -146,6 +119,5 @@ def _get_overrides() -> List[PTransformOverride]:
         CreateOverride(),
         ReshuffleOverride(),
         ReadOverride(),
-        WriteOverride(),
         GroupByKeyOverride(),
     ]

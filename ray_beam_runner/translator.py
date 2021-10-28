@@ -444,7 +444,7 @@ class TranslationExecutor(PipelineVisitor):
                 elif not isinstance(ray_ds, ray.data.Dataset):
                     out = ray_ds
                 else:
-                    out = ray.get(ray_ds.to_numpy())
+                    out = ray.get(ray_ds.to_numpy_refs())
                 print(("DATA", name, out))
                 continue
 

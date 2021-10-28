@@ -15,7 +15,6 @@ from ray_beam_runner.collection import CollectionMap
 from ray_beam_runner.custom_actor_pool import CustomActorPool
 from ray_beam_runner.overrides import (_Create, _Read, _Reshuffle,
                                        _GroupByKeyOnly, _GroupAlsoByWindow)
-from ray_beam_runner.util import group_by_key
 from apache_beam.transforms.window import WindowFn, TimestampedValue, \
     GlobalWindow
 from apache_beam.typehints import Optional
@@ -305,9 +304,43 @@ class RayGroupByKey(RayDataTranslation):
         assert ray_ds is not None
         assert isinstance(ray_ds, ray.data.Dataset)
 
-        grouped = group_by_key(ray_ds)
+        # TODO(jjyao) Currently dataset doesn't handle
+        # tuple groupby key so we wrap it in an object as a workaround.
+        # This hack can be removed once dataset supports tuple groupby key.
+        class KeyWrapper(object):
+            def __init__(self, key):
+                self.key = key
 
-        return ray.data.from_items(list(grouped.items()) if grouped else [{}])
+            def __lt__(self, other):
+                return self.key < other.key
+
+            def __eq__(self, other):
+                return self.key == other.key
+
+        def key(windowed_value):
+            if not isinstance(windowed_value, WindowedValue):
+                windowed_value = WindowedValue(windowed_value, 0,
+                                           (GlobalWindow(), ))
+
+            # Extract key from windowed value
+            key, _ = windowed_value.value
+            # We convert to strings here to support void keys
+            return KeyWrapper(str(key) if key is None else key)
+
+        def value(windowed_value):
+            if not isinstance(windowed_value, WindowedValue):
+                windowed_value = WindowedValue(windowed_value, 0,
+                                           (GlobalWindow(), ))
+
+            # Extract value from windowed value
+            _, value = windowed_value.value
+            return value
+
+        return ray_ds.groupby(key).aggregate(ray.data.aggregate.AggregateFn(
+            init=lambda k: [],
+            accumulate=lambda a, r: a + [value(r)],
+            merge=lambda a1, a2: a1 + a2,
+        )).map(lambda r: (r[0].key, r[1]))
 
 
 class RayWindowInto(RayDataTranslation):

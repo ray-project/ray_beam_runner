@@ -1,9 +1,9 @@
 from setuptools import find_packages, setup
 
 TEST_REQUIREMENTS = [
+    'apache_beam[test]',
     'pyhamcrest',
     'pytest',
-    'tenacity',
 ]
 
 setup(

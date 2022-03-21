@@ -15,7 +15,7 @@
 # limitations under the License.
 #
 
-"""Set of utilities for execution of a pipeline by the FnApiRunner."""
+"""Set of utilities for execution of a pipeline by the RayRunner."""
 
 # mypy: disallow-untyped-defs
 

@@ -66,9 +66,8 @@ format_changed() {
     # exist on both branches.
     echo 'jjyao megebase start'
     git merge-base upstream/master HEAD
-    MERGEBASE="$(git merge-base upstream/master HEAD)"
-
     echo 'jjyao megebase'
+    MERGEBASE="$(git merge-base upstream/master HEAD)"
 
     if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.py' &>/dev/null; then
         git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.py' | xargs -P 5 \

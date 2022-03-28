@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# YAPF + Clang formatter (if installed). This script formats all changed files from the last mergebase.
+# Black formatter (if installed). This script formats all changed files from the last mergebase.
 # You are encouraged to run this locally before pushing changes for review.
 
 # Cause the script to exit if a single command fails
 set -eo pipefail
 
-FLAKE8_VERSION_REQUIRED="3.7.7"
-YAPF_VERSION_REQUIRED="0.23.0"
+FLAKE8_VERSION_REQUIRED="3.9.1"
+BLACK_VERSION_REQUIRED="21.12b0"
 
 check_command_exist() {
     VERSION=""
     case "$1" in
-        yapf)
-            VERSION=$YAPF_VERSION_REQUIRED
+        black)
+            VERSION=$BLACK_VERSION_REQUIRED
             ;;
         flake8)
             VERSION=$FLAKE8_VERSION_REQUIRED
@@ -27,14 +27,8 @@ check_command_exist() {
     fi
 }
 
-check_command_exist yapf
+check_command_exist black
 check_command_exist flake8
-
-ver=$(yapf --version)
-if ! echo $ver | grep -q 0.23.0; then
-    echo "Wrong YAPF version installed: 0.23.0 is required, not $ver. $YAPF_DOWNLOAD_COMMAND_MSG"
-    exit 1
-fi
 
 # this stops git rev-parse from failing if we run this from the .git directory
 builtin cd "$(dirname "${BASH_SOURCE:-$0}")"
@@ -42,13 +36,8 @@ builtin cd "$(dirname "${BASH_SOURCE:-$0}")"
 ROOT="$(git rev-parse --show-toplevel)"
 builtin cd "$ROOT" || exit 1
 
-# Add the upstream remote if it doesn't exist
-if ! git remote -v | grep -q upstream; then
-    git remote add 'upstream' 'https://github.com/ray-project/ray_beam_runner.git'
-fi
-
-FLAKE8_VERSION=$(flake8 --version | awk '{print $1}')
-YAPF_VERSION=$(yapf --version | awk '{print $2}')
+FLAKE8_VERSION=$(flake8 --version | head -n 1 | awk '{print $1}')
+BLACK_VERSION=$(black --version | awk '{print $2}')
 
 # params: tool name, tool version, required version
 tool_version_check() {
@@ -57,35 +46,13 @@ tool_version_check() {
     fi
 }
 
-tool_version_check "flake8" $FLAKE8_VERSION $FLAKE8_VERSION_REQUIRED
-tool_version_check "yapf" $YAPF_VERSION $YAPF_VERSION_REQUIRED
+tool_version_check "flake8" "$FLAKE8_VERSION" "$FLAKE8_VERSION_REQUIRED"
+tool_version_check "black" "$BLACK_VERSION" "$BLACK_VERSION_REQUIRED"
 
-if which clang-format >/dev/null; then
-  CLANG_FORMAT_VERSION=$(clang-format --version | awk '{print $3}')
-  tool_version_check "clang-format" $CLANG_FORMAT_VERSION "7.0.0"
-else
-    echo "WARNING: clang-format is not installed!"
-fi
-
-# Only fetch master since that's the branch we're diffing against.
-git fetch upstream master || true
-
-YAPF_FLAGS=(
-    '--style' "$ROOT/.style.yapf"
-    '--recursive'
-    '--parallel'
-)
-
-YAPF_EXCLUDES=(
-    # '--exclude' 'python/ray/cloudpickle/*'
-    # '--exclude' 'python/build/*'
-    # '--exclude' 'python/ray/core/src/ray/gcs/*'
-    # '--exclude' 'python/ray/thirdparty_files/*'
-)
 
 # Format specified files
-format() {
-    yapf --in-place "${YAPF_FLAGS[@]}" -- "$@"
+format_files() {
+    black "$@"
 }
 
 # Format files that differ from main branch. Ignores dirs that are not slated
@@ -101,36 +68,37 @@ format_changed() {
 
     if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.py' &>/dev/null; then
         git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.py' | xargs -P 5 \
-             yapf --in-place "${YAPF_EXCLUDES[@]}" "${YAPF_FLAGS[@]}"
+            black "${BLACK_EXCLUDES[@]}"
         if which flake8 >/dev/null; then
             git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.py' | xargs -P 5 \
-                 flake8 --inline-quotes '"' --no-avoid-escape --ignore=N,I,C408,E121,E123,E126,E226,E24,E704,W503,W504,W605
-        fi
-    fi
-
-    if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.pyx' '*.pxd' '*.pxi' &>/dev/null; then
-        if which flake8 >/dev/null; then
-            git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.pyx' '*.pxd' '*.pxi' | xargs -P 5 \
-                 flake8 --inline-quotes '"' --no-avoid-escape --ignore=N,I,C408,E121,E123,E126,E211,E225,E226,E227,E24,E704,E999,W503,W504,W605
+                 flake8 --config=.flake8
         fi
     fi
 }
 
 # Format all files, and print the diff to stdout for travis.
 format_all() {
-    yapf --diff "${YAPF_FLAGS[@]}" "${YAPF_EXCLUDES[@]}" ray_beam_runner
-    flake8 --inline-quotes '"' --no-avoid-escape --ignore=N,I,C408,E121,E123,E126,E211,E225,E226,E227,E24,E704,E999,W503,W504,W605 ray_beam_runner
+    black ray_beam_runner/
+    flake8 --config=.flake8 ray_beam_runner
 }
 
 # This flag formats individual files. --files *must* be the first command line
 # arg to use this option.
 if [[ "$1" == '--files' ]]; then
-    format "${@:2}"
+    format_files "${@:2}"
     # If `--all` is passed, then any further arguments are ignored and the
     # entire python directory is formatted.
 elif [[ "$1" == '--all' ]]; then
     format_all
 else
+    # Add the upstream remote if it doesn't exist
+    if ! git remote -v | grep -q upstream; then
+      git remote add 'upstream' 'https://github.com/ray-project/ray_beam_runner.git'
+    fi
+
+    # Only fetch master since that's the branch we're diffing against.
+    git fetch upstream master || true
+
     # Format only the files that changed in last commit.
     format_changed
 fi

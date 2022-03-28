@@ -59,20 +59,21 @@ format_files() {
 # for autoformat yet.
 format_changed() {
     # The `if` guard ensures that the list of filenames is not empty, which
-    # could cause yapf to receive 0 positional arguments, making it hang
-    # waiting for STDIN.
+    # could cause the formatter to receive 0 positional arguments, making
+    # Black error.
     #
     # `diff-filter=ACRM` and $MERGEBASE is to ensure we only format files that
     # exist on both branches.
     MERGEBASE="$(git merge-base upstream/master HEAD)"
 
+    echo 'jjyao megebase'
+
     if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.py' &>/dev/null; then
         git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.py' | xargs -P 5 \
-            black "${BLACK_EXCLUDES[@]}"
-        if which flake8 >/dev/null; then
-            git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.py' | xargs -P 5 \
-                 flake8 --config=.flake8
-        fi
+            black
+        echo 'jjyao diff'
+        git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.py' | xargs -P 5 \
+            flake8 --config=.flake8
     fi
 }
 
@@ -96,12 +97,8 @@ else
       git remote add 'upstream' 'https://github.com/ray-project/ray_beam_runner.git'
     fi
 
-    echo 'jjyao remote add'
-
     # Only fetch master since that's the branch we're diffing against.
     git fetch upstream master || true
-
-    echo 'jjyao fetch upstream'
 
     # Format only the files that changed in last commit.
     format_changed

@@ -64,6 +64,8 @@ format_changed() {
     #
     # `diff-filter=ACRM` and $MERGEBASE is to ensure we only format files that
     # exist on both branches.
+    echo 'jjyao megebase start'
+    git merge-base upstream/master HEAD
     MERGEBASE="$(git merge-base upstream/master HEAD)"
 
     echo 'jjyao megebase'
@@ -71,7 +73,6 @@ format_changed() {
     if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.py' &>/dev/null; then
         git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.py' | xargs -P 5 \
             black
-        echo 'jjyao diff'
         git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.py' | xargs -P 5 \
             flake8 --config=.flake8
     fi

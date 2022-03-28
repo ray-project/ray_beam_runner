@@ -20,4 +20,4 @@ jobs:
           pip install -r requirements.txt
       - name: Format
         run: |
-          sh scripts/format.sh
+          bash scripts/format.sh

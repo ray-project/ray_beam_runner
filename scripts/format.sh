@@ -96,8 +96,12 @@ else
       git remote add 'upstream' 'https://github.com/ray-project/ray_beam_runner.git'
     fi
 
+    echo 'jjyao remote add'
+
     # Only fetch master since that's the branch we're diffing against.
     git fetch upstream master || true
+
+    echo 'jjyao fetch upstream'
 
     # Format only the files that changed in last commit.
     format_changed

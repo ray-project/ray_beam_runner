@@ -42,7 +42,7 @@ BLACK_VERSION=$(black --version | awk '{print $2}')
 # params: tool name, tool version, required version
 tool_version_check() {
     if [[ $2 != $3 ]]; then
-        echo "WARNING: Ray uses $1 $3, You currently are using $2. This might generate different results."
+        echo "WARNING: Ray Beam Runner uses $1 $3, You are currently using $2. This might generate different results."
     fi
 }
 

@@ -46,6 +46,7 @@ from apache_beam.options.pipeline_options import StandardOptions
 from apache_beam.options.value_provider import RuntimeValueProvider
 from apache_beam.portability import python_urns
 from ray_beam_runner import ray_runner
+from apache_beam.runners.portability.fn_api_runner import fn_runner_test
 from apache_beam.runners.sdf_utils import RestrictionTrackerView
 from apache_beam.runners.worker import data_plane
 from apache_beam.runners.worker import statesampler
@@ -82,6 +83,18 @@ def has_urn_and_labels(mi, urn, labels):
         return all(item in mi.labels.items() for item in labels.items())
 
     return contains_labels(mi, labels) and mi.urn == urn
+
+
+class RayFnRunnerTest(fn_runner_test.FnApiRunnerTest):
+    def setUp(self) -> None:
+        import ray
+        if not ray.is_initialized():
+            ray.init(local_mode=True)
+
+    def create_pipeline(self, is_drain=False):
+        return beam.Pipeline(
+            runner=ray_runner.RayRunner(),
+            options=PipelineOptions(["--parallelism=1"]))
 
 
 class RayRunnerTest(unittest.TestCase):

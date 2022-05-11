@@ -148,6 +148,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
       assert_that(unnamed.even, equal_to([2]), label='unnamed.even')
       assert_that(unnamed.odd, equal_to([1, 3]), label='unnamed.odd')
 
+  @unittest.skip('Side inputs not yet supported')
   def test_pardo_side_inputs(self):
     def cross_product(elem, sides):
       for side in sides:
@@ -161,6 +162,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
           equal_to([('a', 'x'), ('b', 'x'), ('c', 'x'), ('a', 'y'), ('b', 'y'),
                     ('c', 'y')]))
 
+  @unittest.skip('Side inputs not yet supported')
   def test_pardo_side_input_dependencies(self):
     with self.create_pipeline() as p:
       inputs = [p | beam.Create([None])]
@@ -170,6 +172,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
                 ExpectingSideInputsFn(f'Do{k}'),
                 *[beam.pvalue.AsList(inputs[s]) for s in range(1, k)]))
 
+  @unittest.skip('Side inputs not yet supported')
   def test_pardo_side_input_sparse_dependencies(self):
     with self.create_pipeline() as p:
       inputs = []
@@ -190,6 +193,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
                       for s in range(1, num_inputs)
                   ]))
 
+  @unittest.skip('Side inputs not yet supported')
   def test_pardo_windowed_side_inputs(self):
     with self.create_pipeline() as p:
       # Now with some windowing.
@@ -218,6 +222,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
           ]),
           label='windowed')
 
+  @unittest.skip('Side inputs not yet supported')
   def test_flattened_side_input(self, with_transcoding=True):
     with self.create_pipeline() as p:
       main = p | 'main' >> beam.Create([None])
@@ -240,6 +245,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
                   equal_to([('a', 1), ('b', 2)] + third_element),
                   label='CheckFlattenOfSideInput')
 
+  @unittest.skip('Side inputs not yet supported')
   def test_gbk_side_input(self):
     with self.create_pipeline() as p:
       main = p | 'main' >> beam.Create([None])
@@ -250,6 +256,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
               'a': [1]
           })]))
 
+  @unittest.skip('Side inputs not yet supported')
   def test_multimap_side_input(self):
     with self.create_pipeline() as p:
       main = p | 'main' >> beam.Create(['a', 'b'])
@@ -259,6 +266,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
               lambda k, d: (k, sorted(d[k])), beam.pvalue.AsMultiMap(side)),
           equal_to([('a', [1, 3]), ('b', [2])]))
 
+  @unittest.skip('Side inputs not yet supported')
   def test_multimap_multiside_input(self):
     # A test where two transforms in the same stage consume the same PCollection
     # twice as side input.
@@ -280,6 +288,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
               beam.pvalue.AsList(side)),
           equal_to([('a', [1, 3], [1, 2, 3]), ('b', [2], [1, 2, 3])]))
 
+  @unittest.skip('Side inputs not yet supported')
   def test_multimap_side_input_type_coercion(self):
     with self.create_pipeline() as p:
       main = p | 'main' >> beam.Create(['a', 'b'])
@@ -294,6 +303,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
               lambda k, d: (k, sorted(d[k])), beam.pvalue.AsMultiMap(side)),
           equal_to([('a', [1, 3]), ('b', [2])]))
 
+  @unittest.skip('Side inputs not yet supported')
   def test_pardo_unfusable_side_inputs(self):
     def cross_product(elem, sides):
       for side in sides:
@@ -315,12 +325,12 @@ class RayFnApiRunnerTest(unittest.TestCase):
           pcoll | beam.FlatMap(cross_product, beam.pvalue.AsList(derived)),
           equal_to([('a', 'a'), ('a', 'b'), ('b', 'a'), ('b', 'b')]))
 
+  @unittest.skip('State not yet supported')
   def test_pardo_state_only(self):
     index_state_spec = userstate.CombiningValueStateSpec('index', sum)
     value_and_index_state_spec = userstate.ReadModifyWriteStateSpec(
         'value:index', StrUtf8Coder())
 
-    # TODO(ccy): State isn't detected with Map/FlatMap.
     class AddIndex(beam.DoFn):
       def process(
           self,
@@ -371,6 +381,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
       #expected = [('fired', ts) for ts in (20, 200)]
       #assert_that(actual, equal_to(expected))
 
+  @unittest.skip('Timers not yet supported')
   def test_pardo_timers(self):
     timer_spec = userstate.TimerSpec('timer', userstate.TimeDomain.WATERMARK)
     state_spec = userstate.CombiningValueStateSpec('num_called', sum)
@@ -402,6 +413,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
       expected = [('fired', ts) for ts in (20, 200, 40, 400)]
       assert_that(actual, equal_to(expected))
 
+  @unittest.skip('Timers not yet supported')
   def test_pardo_timers_clear(self):
     timer_spec = userstate.TimerSpec('timer', userstate.TimeDomain.WATERMARK)
     clear_timer_spec = userstate.TimerSpec(
@@ -437,12 +449,15 @@ class RayFnApiRunnerTest(unittest.TestCase):
       expected = [('fired', ts) for ts in (20, 200)]
       assert_that(actual, equal_to(expected))
 
+  @unittest.skip('Timers not yet supported')
   def test_pardo_state_timers(self):
     self._run_pardo_state_timers(windowed=False)
 
+  @unittest.skip('Timers not yet supported')
   def test_pardo_state_timers_non_standard_coder(self):
     self._run_pardo_state_timers(windowed=False, key_type=Any)
 
+  @unittest.skip('Timers not yet supported')
   def test_windowed_pardo_state_timers(self):
     self._run_pardo_state_timers(windowed=True)
 
@@ -511,6 +526,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
 
       assert_that(actual, is_buffered_correctly)
 
+  @unittest.skip('Timers not yet supported')
   def test_pardo_dynamic_timer(self):
     class DynamicTimerDoFn(beam.DoFn):
       dynamic_timer_spec = userstate.TimerSpec(
@@ -535,6 +551,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
           | beam.ParDo(DynamicTimerDoFn()))
       assert_that(actual, equal_to([('key1', 10), ('key2', 20), ('key3', 30)]))
 
+  @unittest.skip('SDF not yet supported')
   def test_sdf(self):
     class ExpandingStringsDoFn(beam.DoFn):
       def process(
@@ -553,6 +570,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
       actual = (p | beam.Create(data) | beam.ParDo(ExpandingStringsDoFn()))
       assert_that(actual, equal_to(list(''.join(data))))
 
+  @unittest.skip('SDF not yet supported')
   def test_sdf_with_dofn_as_restriction_provider(self):
     class ExpandingStringsDoFn(beam.DoFn, ExpandStringsProvider):
       def process(
@@ -568,6 +586,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
       actual = (p | beam.Create(data) | beam.ParDo(ExpandingStringsDoFn()))
       assert_that(actual, equal_to(list(''.join(data))))
 
+  @unittest.skip('SDF not yet supported')
   def test_sdf_with_check_done_failed(self):
     class ExpandingStringsDoFn(beam.DoFn):
       def process(
@@ -587,6 +606,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
         data = ['abc', 'defghijklmno', 'pqrstuv', 'wxyz']
         _ = (p | beam.Create(data) | beam.ParDo(ExpandingStringsDoFn()))
 
+  @unittest.skip('SDF not yet supported')
   def test_sdf_with_watermark_tracking(self):
     class ExpandingStringsDoFn(beam.DoFn):
       def process(
@@ -613,6 +633,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
       actual = (p | beam.Create(data) | beam.ParDo(ExpandingStringsDoFn()))
       assert_that(actual, equal_to(list(''.join(data))))
 
+  @unittest.skip('SDF not yet supported')
   def test_sdf_with_dofn_as_watermark_estimator(self):
     class ExpandingStringsDoFn(beam.DoFn, beam.WatermarkEstimatorProvider):
       def initial_estimator_state(self, element, restriction):
@@ -677,12 +698,15 @@ class RayFnApiRunnerTest(unittest.TestCase):
       self.assertEqual(1, len(counters))
       self.assertEqual(counters[0].committed, len(''.join(data)))
 
+  @unittest.skip('SDF not yet supported')
   def test_sdf_with_sdf_initiated_checkpointing(self):
     self.run_sdf_initiated_checkpointing(is_drain=False)
 
+  @unittest.skip('SDF not yet supported')
   def test_draining_sdf_with_sdf_initiated_checkpointing(self):
     self.run_sdf_initiated_checkpointing(is_drain=True)
 
+  @unittest.skip('SDF not yet supported')
   def test_sdf_default_truncate_when_bounded(self):
     class SimleSDF(beam.DoFn):
       def process(
@@ -700,6 +724,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
       actual = (p | beam.Create([10]) | beam.ParDo(SimleSDF()))
       assert_that(actual, equal_to(range(10)))
 
+  @unittest.skip('SDF not yet supported')
   def test_sdf_default_truncate_when_unbounded(self):
     class SimleSDF(beam.DoFn):
       def process(
@@ -717,6 +742,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
       actual = (p | beam.Create([10]) | beam.ParDo(SimleSDF()))
       assert_that(actual, equal_to([]))
 
+  @unittest.skip('SDF not yet supported')
   def test_sdf_with_truncate(self):
     class SimleSDF(beam.DoFn):
       def process(
@@ -767,6 +793,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
       pc = p | beam.Create(['a', 'b'])
       assert_that((pc, pc, pc) | beam.Flatten(), equal_to(['a', 'b'] * 3))
 
+  @unittest.skip('Combiner lifting not yet supported')
   def test_combine_per_key(self):
     with self.create_pipeline() as p:
       res = (
@@ -837,6 +864,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
       gbk_res = (big | beam.GroupByKey() | beam.Map(lambda x: x[0]))
       assert_that(gbk_res, equal_to(['a', 'b']), label='gbk')
 
+  @unittest.skip('Error messages need to improve')
   def test_error_message_includes_stage(self):
     with self.assertRaises(BaseException) as e_cm:
       with self.create_pipeline() as p:
@@ -888,6 +916,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
       pcoll_b = p | 'b' >> beam.Create(['b'])
       assert_that((pcoll_a, pcoll_b) | First(), equal_to(['a']))
 
+  @unittest.skip('Metrics not yet supported')
   def test_metrics(self, check_gauge=True):
     p = self.create_pipeline()
 
@@ -939,6 +968,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
           | beam.ParDo(FinalizebleDoFnWithException()))
       assert_that(res, equal_to(['1', '2']))
 
+  @unittest.skip('SDF not yet supported')
   def test_register_finalizations(self):
     event_recorder = EventRecorder(tempfile.gettempdir())
 
@@ -976,6 +1006,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
 
     event_recorder.cleanup()
 
+  @unittest.skip('SDF not yet supported')
   def test_sdf_synthetic_source(self):
     common_attrs = {
         'key_size': 1,
@@ -1067,6 +1098,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
         self.assertTrue(
             any(re.match(packed_step_name_regex, s) for s in step_names))
 
+  @unittest.skip('Combiners not yet supported')
   def test_pack_combiners(self):
     self._test_pack_combiners(assert_using_counter_names=True)
 
@@ -1607,6 +1639,7 @@ class FnApiRunnerSplitTest(unittest.TestCase):
       _LOGGER.error('test_split_crazy_sdf.seed = %s', seed)
       raise
 
+  @unittest.skip('SDF not yet supported')
   def test_nosplit_sdf(self):
     def split_manager(num_elements):
       yield
@@ -1616,21 +1649,27 @@ class FnApiRunnerSplitTest(unittest.TestCase):
     self.run_sdf_split_pipeline(
         split_manager, elements, ElementCounter(), expected_groups)
 
+  @unittest.skip('SDF not yet supported')
   def test_checkpoint_sdf(self):
     self.run_sdf_checkpoint(is_drain=False)
 
+  @unittest.skip('SDF not yet supported')
   def test_checkpoint_draining_sdf(self):
     self.run_sdf_checkpoint(is_drain=True)
 
+  @unittest.skip('SDF not yet supported')
   def test_split_half_sdf(self):
     self.run_sdf_split_half(is_drain=False)
 
+  @unittest.skip('SDF not yet supported')
   def test_split_half_draining_sdf(self):
     self.run_sdf_split_half(is_drain=True)
 
+  @unittest.skip('SDF not yet supported')
   def test_split_crazy_sdf(self, seed=None):
     self.run_split_crazy_sdf(seed=seed, is_drain=False)
 
+  @unittest.skip('SDF not yet supported')
   def test_split_crazy_draining_sdf(self, seed=None):
     self.run_split_crazy_sdf(seed=seed, is_drain=True)
 

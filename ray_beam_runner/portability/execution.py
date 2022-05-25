@@ -333,7 +333,7 @@ class RayWatermarkManager(watermark_manager.WatermarkManager):
     if self._initialized:
       return
     logging.info('initialized the RayWatermarkManager')
-    watermark_manager.WatermarkManager.setup(self, stages)
+    watermark_manager.WatermarkManager.__init__(self, stages)
     self._initialized = True
 
 

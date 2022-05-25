@@ -24,7 +24,7 @@ import collections
 import logging
 import random
 import typing
-from typing import Iterator, Tuple, Any, List
+from typing import Iterator, Any
 from typing import List
 from typing import Mapping
 from typing import Optional

@@ -4,7 +4,8 @@ import unittest
 import ray
 
 import apache_beam.portability.api.beam_fn_api_pb2
-from ray_beam_runner.portability.execution import RayStateManager
+from ray_beam_runner.portability.state import RayStateManager
+
 
 class StateHandlerTest(unittest.TestCase):
   SAMPLE_STATE_KEY = apache_beam.portability.api.beam_fn_api_pb2.StateKey()

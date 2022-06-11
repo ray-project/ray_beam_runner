@@ -66,6 +66,7 @@ from apache_beam.transforms import window
 from apache_beam.utils import timestamp
 
 import ray_beam_runner.portability.ray_fn_runner
+import ray
 
 if statesampler.FAST_SAMPLER:
   DEFAULT_SAMPLING_PERIOD_MS = statesampler.DEFAULT_SAMPLING_PERIOD_MS
@@ -94,6 +95,12 @@ def has_urn_and_labels(mi, urn, labels):
 
 
 class RayFnApiRunnerTest(unittest.TestCase):
+
+  @classmethod
+  def setUpClass(cls) -> None:
+    if not ray.is_initialized():
+      ray.init(local_mode=True)
+
   def create_pipeline(self, is_drain=False):
     return beam.Pipeline(runner=ray_beam_runner.portability.ray_fn_runner.RayFnApiRunner())
 
@@ -1006,7 +1013,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
 
     event_recorder.cleanup()
 
-  @unittest.skip('SDF not yet supported')
   def test_sdf_synthetic_source(self):
     common_attrs = {
         'key_size': 1,
@@ -1109,10 +1115,14 @@ class RayFnApiRunnerTest(unittest.TestCase):
 # it makes the probability of sampling far too small
 # upon repeating bundle processing due to unncessarily incrementing
 # the sampling counter.
-class FnApiRunnerMetricsTest(unittest.TestCase):
+class RayRunnerMetricsTest(unittest.TestCase):
+  @classmethod
+  def setUpClass(cls) -> None:
+    if not ray.is_initialized():
+      ray.init(local_mode=True)
+
   def assert_has_counter(
       self, mon_infos, urn, labels, value=None, ge_value=None):
-    # TODO(ajamato): Consider adding a matcher framework
     found = 0
     matches = []
     for mi in mon_infos:
@@ -1181,7 +1191,7 @@ class FnApiRunnerMetricsTest(unittest.TestCase):
         ))
 
   def create_pipeline(self):
-    return beam.Pipeline(runner=fn_api_runner.FnApiRunner())
+    return beam.Pipeline(runner=ray_beam_runner.portability.ray_fn_runner.RayFnApiRunner())
 
   def test_element_count_metrics(self):
     class GenerateTwoOutputs(beam.DoFn):
@@ -1496,15 +1506,14 @@ class FnApiRunnerMetricsTest(unittest.TestCase):
       raise
 
 
-class FnApiRunnerSplitTest(unittest.TestCase):
+class RayRunnerSplitTest(unittest.TestCase):
+  @classmethod
+  def setUpClass(cls) -> None:
+    if not ray.is_initialized():
+      ray.init(local_mode=True)
+
   def create_pipeline(self, is_drain=False):
-    # Must be GRPC so we can send data and split requests concurrent
-    # to the bundle process request.
-    return beam.Pipeline(
-        runner=fn_api_runner.FnApiRunner(
-            default_environment=environments.EmbeddedPythonGrpcEnvironment.
-            default(),
-            is_drain=is_drain))
+    return beam.Pipeline(runner=ray_beam_runner.portability.ray_fn_runner.RayFnApiRunner())
 
   def test_checkpoint(self):
     # This split manager will get re-invoked on each smaller split,
@@ -1887,58 +1896,6 @@ class OffsetRangeProviderWithTruncate(OffsetRangeProvider):
         restriction.start, restriction.stop // 2)
 
 
-class FnApiBasedLullLoggingTest(unittest.TestCase):
-  def create_pipeline(self):
-    return beam.Pipeline(
-        runner=fn_api_runner.FnApiRunner(
-            default_environment=environments.EmbeddedPythonGrpcEnvironment.
-            default(),
-            progress_request_frequency=0.5))
-
-
-class StateBackedTestElementType(object):
-  live_element_count = 0
-
-  def __init__(self, num_elements, unused):
-    self.num_elements = num_elements
-    StateBackedTestElementType.live_element_count += 1
-    # Due to using state backed iterable, we expect there is a few instances
-    # alive at any given time.
-    if StateBackedTestElementType.live_element_count > 5:
-      raise RuntimeError('Too many live instances.')
-
-  def __del__(self):
-    StateBackedTestElementType.live_element_count -= 1
-
-  def __reduce__(self):
-    return (self.__class__, (self.num_elements, 'x' * self.num_elements))
-
-
-@pytest.mark.it_validatesrunner
-class FnApiBasedStateBackedCoderTest(unittest.TestCase):
-  def create_pipeline(self):
-    return beam.Pipeline(
-        runner=fn_api_runner.FnApiRunner(use_state_iterables=True))
-
-  def test_gbk_many_values(self):
-    with self.create_pipeline() as p:
-      # The number of integers could be a knob to test against
-      # different runners' default settings on page size.
-      VALUES_PER_ELEMENT = 300
-      NUM_OF_ELEMENTS = 200
-
-      r = (
-          p
-          | beam.Create([None])
-          | beam.FlatMap(
-              lambda x: ((1, StateBackedTestElementType(VALUES_PER_ELEMENT, _))
-                         for _ in range(NUM_OF_ELEMENTS)))
-          | beam.GroupByKey()
-          | beam.MapTuple(lambda _, vs: sum(e.num_elements for e in vs)))
-
-      assert_that(r, equal_to([VALUES_PER_ELEMENT * NUM_OF_ELEMENTS]))
-
-
 # TODO(robertwb): Why does pickling break when this is inlined?
 class CustomMergingWindowFn(window.WindowFn):
   def assign(self, assign_context):
@@ -1972,6 +1929,7 @@ class ExpectingSideInputsFn(beam.DoFn):
       raise ValueError(f'Missing data in side input {side_inputs}')
     yield self._name
 
+logging.getLogger().setLevel(logging.INFO)
 
 if __name__ == '__main__':
   logging.getLogger().setLevel(logging.INFO)

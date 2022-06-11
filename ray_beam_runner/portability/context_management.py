@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+import logging
 import typing
 from typing import List
 from typing import Optional
@@ -96,7 +97,7 @@ class RayBundleContextManager:
 
     return pbd.SerializeToString()
 
-  def extract_bundle_inputs_and_outputs(self):
+  def get_bundle_inputs_and_outputs(self):
     # type: () -> Tuple[Dict[str, PartitionableBuffer], DataOutput, Dict[TimerFamilyId, bytes]]
 
     """Returns maps of transform names to PCollection identifiers.
@@ -111,6 +112,9 @@ class RayBundleContextManager:
         `expected_timer_output` is a dictionary mapping transform_id and
         timer family ID to a buffer id for timers.
     """
+    return self.transform_to_buffer_coder, self.data_output, self.stage_timers
+
+  def setup(self):
     transform_to_buffer_coder: typing.Dict[str, typing.Tuple[bytes, str]] = {}
     data_output = {}  # type: DataOutput
     expected_timer_output = {}  # type: OutputTimers
@@ -122,9 +126,9 @@ class RayBundleContextManager:
           coder_id = self.execution_context.data_channel_coders[translations.only_element(
               transform.outputs.values())]
           if pcoll_id == translations.IMPULSE_BUFFER:
-            buffer_actor = ray.get(self.execution_context.pcollection_buffers.get.remote(
-              transform.unique_name))
-            ray.get(buffer_actor.append.remote(fn_execution.ENCODED_IMPULSE_VALUE))
+            data_ref = ray.put([fn_execution.ENCODED_IMPULSE_VALUE])
+            self.execution_context.pcollection_buffers.put.remote(
+              transform.unique_name, [data_ref])
             pcoll_id = transform.unique_name.encode('utf8')
           else:
             pass
@@ -148,4 +152,5 @@ class RayBundleContextManager:
         for timer_family_id in payload.timer_family_specs.keys():
           expected_timer_output[(transform.unique_name, timer_family_id)] = (
               translations.create_buffer_id(timer_family_id, 'timers'))
-    return transform_to_buffer_coder, data_output, expected_timer_output
+    self.transform_to_buffer_coder, self.data_output, self.stage_timers = (
+      transform_to_buffer_coder, data_output, expected_timer_output)

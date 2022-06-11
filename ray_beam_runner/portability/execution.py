@@ -19,21 +19,23 @@
 
 # mypy: disallow-untyped-defs
 
-import contextlib
 import collections
+import dataclasses
+import itertools
 import logging
 import random
 import typing
-from typing import Iterator, Any
+from typing import Any
 from typing import List
 from typing import Mapping
 from typing import Optional
 from typing import Tuple
 
-import apache_beam
 import ray
-from apache_beam import coders
 
+import apache_beam
+from apache_beam import coders
+from apache_beam.metrics import monitoring_infos
 from apache_beam.portability import common_urns
 from apache_beam.portability.api import beam_fn_api_pb2
 from apache_beam.portability.api import beam_runner_api_pb2
@@ -43,7 +45,8 @@ from apache_beam.runners.portability.fn_api_runner import translations
 from apache_beam.runners.portability.fn_api_runner import watermark_manager
 from apache_beam.runners.portability.fn_api_runner import worker_handlers
 from apache_beam.runners.worker import bundle_processor
-from apache_beam.runners.worker import sdk_worker
+
+from ray_beam_runner.portability.state import RayStateManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,10 +54,10 @@ _LOGGER = logging.getLogger(__name__)
 @ray.remote
 def ray_execute_bundle(
     runner_context: 'RayRunnerExecutionContext',
+    input_bundle: 'Bundle',
     transform_buffer_coder: Mapping[str, typing.Tuple[bytes, str]],
-    fired_timers: Mapping[translations.TimerFamilyId, fn_execution.PartitionableBuffer],
     expected_outputs: translations.DataOutput,
-    expected_output_timers: Mapping[translations.TimerFamilyId, bytes],
+    stage_timers: Mapping[translations.TimerFamilyId, bytes],
     instruction_request_repr: Mapping[str, typing.Any],
     dry_run=False,
 ) -> Tuple[Any, List[Any]]:
@@ -67,57 +70,13 @@ def ray_execute_bundle(
   output_buffers = collections.defaultdict(list)
   process_bundle_id = instruction_request.instruction_id
 
-  worker_handler: worker_handlers.WorkerHandler = worker_handlers.EmbeddedWorkerHandler(
-      None, # Unnecessary payload.
-      runner_context.state_servicer,
-      None, # Unnecessary provision info.
-      runner_context.worker_manager,
-  )
-  worker_handler.worker.bundle_processor_cache.register(
-    runner_context.worker_manager.process_bundle_descriptor(instruction_request_repr['process_descriptor_id'])
-  )
+  worker_handler = _get_worker_handler(
+    runner_context, instruction_request_repr['process_descriptor_id'])
 
-  for transform_id, timer_family_id in expected_output_timers.keys():
-    timer_out = worker_handler.data_conn.output_timer_stream(
-        process_bundle_id, transform_id, timer_family_id)
-    for timer in fired_timers.get((transform_id, timer_family_id), []):
-      timer_out.write(timer)
-    timer_out.close()
-
-  def fetch_data(transform_name, buffer_id, coder_id):
-    if buffer_id.startswith(b'group'):
-      _, pcoll_id = translations.split_buffer_id(buffer_id)
-      transform = runner_context.pipeline_components.transforms[pcoll_id]
-      out_pcoll = runner_context.pipeline_components.pcollections[transform.outputs['None']]
-      windowing_strategy = runner_context.pipeline_components.windowing_strategies[out_pcoll.windowing_strategy_id]
-      postcoder = runner_context.pipeline_context.coders[coder_id]
-      precoder = coders.WindowedValueCoder(
-        coders.TupleCoder((
-          postcoder.wrapped_value_coder._coders[0],
-          postcoder.wrapped_value_coder._coders[1]._elem_coder
-        )),
-        postcoder.window_coder)
-      buffer = fn_execution.GroupingBuffer(
-        pre_grouped_coder=precoder,
-        post_grouped_coder=postcoder,
-        windowing=apache_beam.Windowing.from_runner_api(windowing_strategy, None),
-      )
-    else:
-      if isinstance(buffer_id, bytes) and (
-          buffer_id.startswith(b'materialize') or buffer_id.startswith(b'timer')):
-        buffer_id = buffer_id
-      else:
-        buffer_id = transform_name
-
-      buffer = fn_execution.ListBuffer(coder_impl=runner_context.pipeline_context.coders[coder_id].get_impl())
-
-    buffer_actor = ray.get(runner_context.pcollection_buffers.get.remote(buffer_id))
-    for elm in ray.get(buffer_actor.fetch.remote()):
-      buffer.append(elm)
-    return buffer
+  _send_timers(worker_handler, input_bundle, stage_timers, process_bundle_id)
 
   inputs = {
-    k: fetch_data(k, buffer_id, coder_id)
+    k: _fetch_decode_data(runner_context, k, buffer_id, coder_id)
     for k, (buffer_id, coder_id) in transform_buffer_coder.items()
   }
 
@@ -129,7 +88,7 @@ def ray_execute_bundle(
     data_out.close()
 
   expect_reads: List[typing.Union[str, translations.TimerFamilyId]] = list(expected_outputs.keys())
-  expect_reads.extend(list(expected_output_timers.keys()))
+  expect_reads.extend(list(stage_timers.keys()))
 
   result_future = worker_handler.control_conn.push(instruction_request)
 
@@ -143,19 +102,54 @@ def ray_execute_bundle(
     if isinstance(output, beam_fn_api_pb2.Elements.Data) and not dry_run:
       output_buffers[expected_outputs[output.transform_id]].append(output.data)
 
-  actor_calls = []
   for pcoll, buffer in output_buffers.items():
-    buffer_actor = ray.get(runner_context.pcollection_buffers.get.remote(pcoll))
-    actor_calls.append(buffer_actor.extend.remote(buffer))
-  ray.get(actor_calls)
+    runner_context.pcollection_buffers.put.remote(pcoll, [ray.put(buffer)])
 
   return result_future.get().SerializeToString(), list(output_buffers.keys())
 
 
-class _RayMetricsActor:
-  def __init__(self):
-    self._metrics = {}
+def _fetch_decode_data(runner_context, transform_name, buffer_id, coder_id):
+  if buffer_id.startswith(b'group'):
+    _, pcoll_id = translations.split_buffer_id(buffer_id)
+    transform = runner_context.pipeline_components.transforms[pcoll_id]
+    out_pcoll = runner_context.pipeline_components.pcollections[transform.outputs['None']]
+    windowing_strategy = runner_context.pipeline_components.windowing_strategies[out_pcoll.windowing_strategy_id]
+    postcoder = runner_context.pipeline_context.coders[coder_id]
+    precoder = coders.WindowedValueCoder(
+      coders.TupleCoder((
+        postcoder.wrapped_value_coder._coders[0],
+        postcoder.wrapped_value_coder._coders[1]._elem_coder
+      )),
+      postcoder.window_coder)
+    buffer = fn_execution.GroupingBuffer(
+      pre_grouped_coder=precoder,
+      post_grouped_coder=postcoder,
+      windowing=apache_beam.Windowing.from_runner_api(windowing_strategy, None),
+    )
+  else:
+    if isinstance(buffer_id, bytes) and (
+        buffer_id.startswith(b'materialize') or buffer_id.startswith(b'timer')):
+      buffer_id = buffer_id
+    else:
+      buffer_id = transform_name
 
+    buffer = fn_execution.ListBuffer(coder_impl=runner_context.pipeline_context.coders[coder_id].get_impl())
+
+  data_references = ray.get(runner_context.pcollection_buffers.get.remote(buffer_id))
+  for block in ray.get(data_references):
+    # TODO(pabloem): Stop using ListBuffer, and use different buffers to pass data to Beam
+    for elm in block:
+      buffer.append(elm)
+  return buffer
+
+
+def _send_timers(worker_handler: worker_handlers.WorkerHandler, input_bundle: 'Bundle', stage_timers: Mapping[translations.TimerFamilyId, bytes], process_bundle_id):
+  for transform_id, timer_family_id in stage_timers.keys():
+    timer_out = worker_handler.data_conn.output_timer_stream(
+      process_bundle_id, transform_id, timer_family_id)
+    for timer in input_bundle.input_timers.get((transform_id, timer_family_id), []):
+      timer_out.write(timer)
+    timer_out.close()
 
 @ray.remote
 class _RayRunnerStats:
@@ -165,82 +159,6 @@ class _RayRunnerStats:
   def next_bundle(self):
     self._bundle_uid += 1
     return self._bundle_uid
-
-
-@ray.remote
-class _ActorStateManager:
-  def __init__(self):
-    self._data = collections.defaultdict(lambda : [])
-
-  def get_raw(
-      self,
-      bundle_id: str,
-      state_key: str,
-      continuation_token: Optional[bytes] = None,
-  ) -> Tuple[bytes, Optional[bytes]]:
-    if continuation_token:
-      continuation_token = int(continuation_token)
-    else:
-      continuation_token = 0
-
-    new_cont_token = continuation_token + 1
-    if len(self._data[(bundle_id, state_key)]) == new_cont_token:
-      return self._data[(bundle_id, state_key)][continuation_token], None
-    else:
-      return (self._data[(bundle_id, state_key)][continuation_token],
-              str(continuation_token + 1).encode('utf8'))
-
-  def append_raw(
-      self,
-      bundle_id: str,
-      state_key: str,
-      data: bytes
-  ):
-    self._data[(bundle_id, state_key)].append(data)
-
-  def clear(self, bundle_id: str, state_key: str):
-    self._data[(bundle_id, state_key)] = []
-
-
-class RayStateManager(sdk_worker.StateHandler):
-  def __init__(self, state_actor: Optional[_ActorStateManager] = None):
-    self._state_actor = state_actor or _ActorStateManager.remote()
-    self._instruction_id: Optional[str] = None
-
-  @staticmethod
-  def _to_key(state_key: beam_fn_api_pb2.StateKey):
-    return state_key.SerializeToString()
-
-  def get_raw(
-      self,
-      state_key,  # type: beam_fn_api_pb2.StateKey
-      continuation_token=None  # type: Optional[bytes]
-  ) -> Tuple[bytes, Optional[bytes]]:
-    assert self._instruction_id is not None
-    return ray.get(
-        self._state_actor.get_raw.remote(self._instruction_id, RayStateManager._to_key(state_key), continuation_token))
-
-  def append_raw(
-      self,
-      state_key: beam_fn_api_pb2.StateKey,
-      data: bytes
-  ) -> sdk_worker._Future:
-    assert self._instruction_id is not None
-    return self._state_actor.append_raw.remote(self._instruction_id, RayStateManager._to_key(state_key), data)
-
-  def clear(self, state_key: beam_fn_api_pb2.StateKey) -> sdk_worker._Future:
-    # TODO(pabloem): Does the ray future work as a replacement of Beam _Future?
-    assert self._instruction_id is not None
-    return self._state_actor.clear.remote(self._instruction_id, RayStateManager._to_key(state_key))
-
-  @contextlib.contextmanager
-  def process_instruction_id(self, bundle_id: str) -> Iterator[None]:
-    self._instruction_id = bundle_id
-    yield
-    self._instruction_id = None
-
-  def done(self):
-    pass
 
 
 class RayWorkerHandlerManager:
@@ -293,31 +211,14 @@ class RayStage(translations.Stage):
 
 
 @ray.remote
-class PcollectionActor:
-  def __init__(self):
-    self.buffer = []
-
-  def append(self, data):
-    self.buffer.append(data)
-
-  def extend(self, buffer):
-    for elm in buffer:
-      self.buffer.append(elm)
-
-  def fetch(self):
-    return self.buffer
-
-@ray.remote
 class PcollectionBufferManager:
   def __init__(self):
-    self.buffers = {}
+    self.buffers = collections.defaultdict(list)
 
-  def register(self, pcoll):
-    self.buffers[pcoll] = PcollectionActor.remote()
+  def put(self, pcoll, data_refs: List[ray.ObjectRef]):
+    self.buffers[pcoll].extend(data_refs)
 
-  def get(self, pcoll):
-    if pcoll not in self.buffers:
-      self.register(pcoll)
+  def get(self, pcoll) -> List[ray.ObjectRef]:
     return self.buffers[pcoll]
 
 
@@ -328,25 +229,27 @@ class RayWatermarkManager(watermark_manager.WatermarkManager):
     # in its __init__ method. Because Ray calls __init__ whenever
     # it deserializes an object, we'll move its setup elsewhere.
     self._initialized = False
+    self._pcollections_by_name = {}
+    self._stages_by_name = {}
 
   def setup(self, stages):
     if self._initialized:
       return
-    logging.info('initialized the RayWatermarkManager')
-    watermark_manager.WatermarkManager.__init__(self, stages)
+    logging.debug('initialized the RayWatermarkManager')
     self._initialized = True
+    watermark_manager.WatermarkManager.setup(self, stages)
 
 
 class RayRunnerExecutionContext(object):
   def __init__(self,
-      stages: List[translations.Stage],
-      pipeline_components: beam_runner_api_pb2.Components,
-      safe_coders: translations.SafeCoderMapping,
-      data_channel_coders: Mapping[str, str],
-      state_servicer: Optional[RayStateManager] = None,
-      worker_manager: Optional[RayWorkerHandlerManager] = None,
-      pcollection_buffers: PcollectionBufferManager = None,
-  ) -> None:
+               stages: List[translations.Stage],
+               pipeline_components: beam_runner_api_pb2.Components,
+               safe_coders: translations.SafeCoderMapping,
+               data_channel_coders: Mapping[str, str],
+               state_servicer: Optional[RayStateManager] = None,
+               worker_manager: Optional[RayWorkerHandlerManager] = None,
+               pcollection_buffers: PcollectionBufferManager = None,
+               ) -> None:
     ray.util.register_serializer(
       beam_runner_api_pb2.Components,
       serializer=lambda x: x.SerializeToString(),
@@ -376,8 +279,7 @@ class RayRunnerExecutionContext(object):
     }
     self._watermark_manager = RayWatermarkManager.remote()
     self.pipeline_context = pipeline_context.PipelineContext(
-        pipeline_components,
-        iterable_state_write=False)
+      pipeline_components)
     self.safe_windowing_strategies = {
         # TODO: Enable safe_windowing_strategy after
         #  figuring out how to pickle the function.
@@ -392,8 +294,18 @@ class RayRunnerExecutionContext(object):
 
   @property
   def watermark_manager(self):
+    # We don't need to wait for this line to execute with ray.get,
+    # because any further calls to the watermark manager actor will
+    # have to wait for it.
     self._watermark_manager.setup.remote(self.stages)
     return self._watermark_manager
+
+  @staticmethod
+  def next_uid():
+    # TODO(pabloem): Use stats actor for UIDs.
+    # return str(ray.get(self.stats.next_bundle.remote()))
+    # self._uid += 1
+    return str(random.randint(0, 11111111))
 
   def _build_timer_coders_id_map(self):
     # type: () -> Dict[Tuple[str, str], str]
@@ -406,14 +318,6 @@ class RayRunnerExecutionContext(object):
         for id, timer_family_spec in pardo_payload.timer_family_specs.items():
           timer_coder_ids[(transform_id, id)] = (
             timer_family_spec.timer_family_coder_id)
-    return timer_coder_ids
-
-  @staticmethod
-  def next_uid():
-    # TODO(pabloem): Use stats actor for UIDs.
-    # return str(ray.get(self.stats.next_bundle.remote()))
-    # self._uid += 1
-    return str(random.randint(0, 11111111))
 
   def __reduce__(self):
     # We need to implement custom serialization for this particular class
@@ -431,3 +335,42 @@ class RayRunnerExecutionContext(object):
       args[0], beam_runner_api_pb2.Components.FromString(args[1]), args[2],
       args[3], args[4], args[5], args[6])
     return (deserializer, data)
+
+
+def merge_stage_results(
+    previous_result: beam_fn_api_pb2.InstructionResponse,
+    last_result: beam_fn_api_pb2.InstructionResponse
+) -> beam_fn_api_pb2.InstructionResponse:
+  """ Merge InstructionResponse objects from executions of same stage bundles.
+
+  This method is used to produce a global per-stage result object with
+  aggregated metrics and results.
+  """
+  return (
+    last_result
+    if previous_result is None else beam_fn_api_pb2.InstructionResponse(
+      process_bundle=beam_fn_api_pb2.ProcessBundleResponse(
+        monitoring_infos=monitoring_infos.consolidate(
+          itertools.chain(
+            previous_result.process_bundle.monitoring_infos,
+            last_result.process_bundle.monitoring_infos))),
+      error=previous_result.error or last_result.error))
+
+
+def _get_worker_handler(runner_context: RayRunnerExecutionContext, bundle_descriptor_id) -> worker_handlers.WorkerHandler:
+  worker_handler = worker_handlers.EmbeddedWorkerHandler(
+    None, # Unnecessary payload.
+    runner_context.state_servicer,
+    None, # Unnecessary provision info.
+    runner_context.worker_manager,
+  )
+  worker_handler.worker.bundle_processor_cache.register(
+    runner_context.worker_manager.process_bundle_descriptor(bundle_descriptor_id)
+  )
+  return worker_handler
+
+
+@dataclasses.dataclass
+class Bundle:
+  input_timers: Mapping[translations.TimerFamilyId, fn_execution.PartitionableBuffer]
+  input_data: Mapping[str, fn_execution.PartitionableBuffer]

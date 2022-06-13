@@ -47,7 +47,7 @@ from apache_beam.utils import proto_utils
 
 import ray
 from ray_beam_runner.portability.context_management import RayBundleContextManager
-from ray_beam_runner.portability.execution import Bundle
+from ray_beam_runner.portability.execution import Bundle, _get_input_id
 from ray_beam_runner.portability.execution import ray_execute_bundle, merge_stage_results
 from ray_beam_runner.portability.execution import RayRunnerExecutionContext
 
@@ -187,7 +187,7 @@ class RayFnApiRunner(runner.PipelineRunner):
     try:
       for stage in stages:
         bundle_ctx = RayBundleContextManager(runner_execution_context, stage)
-        stage_results = self._run_stage(runner_execution_context, bundle_ctx, queue)
+        self._run_stage(runner_execution_context, bundle_ctx, queue)
     finally:
       pass
     return RayRunnerResult(runner.PipelineState.DONE)
@@ -212,32 +212,31 @@ class RayFnApiRunner(runner.PipelineRunner):
     input_timers: Mapping[translations.TimerFamilyId,
                           execution.PartitionableBuffer] = {}
 
-    _LOGGER.info('Running %s', bundle_context_manager.stage.name)
+    input_data = {
+      k: ray.get(runner_execution_context.pcollection_buffers.get.remote(_get_input_id(bundle_context_manager.transform_to_buffer_coder[k][0], k)))
+      for k in bundle_context_manager.transform_to_buffer_coder}
 
     final_result = None  # type: Optional[beam_fn_api_pb2.InstructionResponse]
 
     while True:
-      last_result, deferred_inputs, fired_timers, watermark_updates, bundle_outputs = (
+      last_result, fired_timers, delayed_applications, bundle_outputs = (
           self._run_bundle(
               runner_execution_context,
               bundle_context_manager,
-              input_timers,))
-
-      for pc_name, watermark in watermark_updates.items():
-        runner_execution_context.watermark_manager.set_pcoll_watermark.remote(
-            pc_name, watermark)
+              Bundle(input_timers=input_timers, input_data=input_data)))
 
       final_result = merge_stage_results(final_result, last_result)
-      if not deferred_inputs and not fired_timers:
+      if not delayed_applications and not fired_timers:
         break
       else:
-        assert (ray.get(runner_execution_context.watermark_manager.get_stage_node.remote(
-            bundle_context_manager.stage.name)).output_watermark()
-                < timestamp.MAX_TIMESTAMP), (
-            'wrong timestamp for %s. '
-            % ray.get(runner_execution_context.watermark_manager.get_stage_node.remote(
-            bundle_context_manager.stage.name)))
-        data_input = deferred_inputs
+        # TODO: Enable following assertion after watermarking is implemented
+        # assert (ray.get(runner_execution_context.watermark_manager.get_stage_node.remote(
+        #     bundle_context_manager.stage.name)).output_watermark()
+        #         < timestamp.MAX_TIMESTAMP), (
+        #     'wrong timestamp for %s. '
+        #     % ray.get(runner_execution_context.watermark_manager.get_stage_node.remote(
+        #     bundle_context_manager.stage.name)))
+        input_data = delayed_applications
         input_timers = fired_timers
 
     # Store the required downstream side inputs into state so it is accessible
@@ -254,25 +253,23 @@ class RayFnApiRunner(runner.PipelineRunner):
       self,
       runner_execution_context: RayRunnerExecutionContext,
       bundle_context_manager: RayBundleContextManager,
-      input_timers: Mapping[translations.TimerFamilyId, execution.PartitionableBuffer],
+      input_bundle: Bundle
   ) -> Tuple[beam_fn_api_pb2.InstructionResponse,
-             Dict[str, execution.PartitionableBuffer],
              Dict[translations.TimerFamilyId, ListBuffer],
-             Dict[Union[str, translations.TimerFamilyId], timestamp.Timestamp],
+             Mapping[str, ray.ObjectRef],
              List[Union[str, translations.TimerFamilyId]]]:
     """Execute a bundle, and return a result object, and deferred inputs."""
     transform_to_buffer_coder, data_output, stage_timers = (
       bundle_context_manager.get_bundle_inputs_and_outputs())
 
-    logging.info("Running bundle with input data from: %s" % list(transform_to_buffer_coder.keys()))
     cache_token_generator = fn_runner.FnApiRunner.get_cache_token_generator(static=False)
 
   # TODO(pabloem): Are there two different IDs? the Bundle ID and PBD ID?
     process_bundle_id = 'bundle_%s' % bundle_context_manager.process_bundle_descriptor.id
 
-    (result_str, output) = ray.get(ray_execute_bundle.remote(
+    (result_str, output, delayed_applications) = ray.get(ray_execute_bundle.remote(
         runner_execution_context,
-        Bundle(input_timers=input_timers, input_data={}),
+        input_bundle,
         transform_to_buffer_coder,
         data_output,
       stage_timers,
@@ -286,13 +283,6 @@ class RayFnApiRunner(runner.PipelineRunner):
 
     # TODO(pabloem): Add support for splitting of results.
 
-    # Now we collect all the deferred inputs remaining from bundle execution.
-    # Deferred inputs can be:
-    # - timers
-    # - SDK-initiated deferred applications of root elements
-    # - Runner-initiated deferred applications of root elements
-    deferred_inputs: Dict[str, execution.PartitionableBuffer] = {}
-
     # After collecting deferred inputs, we 'pad' the structure with empty
     # buffers for other expected inputs.
     # if deferred_inputs or newly_set_timers:
@@ -304,8 +294,7 @@ class RayFnApiRunner(runner.PipelineRunner):
     #               other_input))
 
     newly_set_timers = {}
-    watermark_updates = {}
-    return result, deferred_inputs, newly_set_timers, watermark_updates, output
+    return result, newly_set_timers, delayed_applications, output
 
 
 class RayRunnerResult(runner.PipelineResult):

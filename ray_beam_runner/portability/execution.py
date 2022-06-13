@@ -60,14 +60,14 @@ def ray_execute_bundle(
     stage_timers: Mapping[translations.TimerFamilyId, bytes],
     instruction_request_repr: Mapping[str, typing.Any],
     dry_run=False,
-) -> Tuple[Any, List[Any]]:
+) -> Tuple[str, List[Any], Mapping[str, ray.ObjectRef]]:
 
   instruction_request = beam_fn_api_pb2.InstructionRequest(
     instruction_id=instruction_request_repr['instruction_id'],
     process_bundle=beam_fn_api_pb2.ProcessBundleRequest(
       process_bundle_descriptor_id=instruction_request_repr['process_descriptor_id'],
       cache_tokens=[instruction_request_repr['cache_token']]))
-  output_buffers = collections.defaultdict(list)
+  output_buffers: Mapping[typing.Union[str, translations.TimerFamilyId], list] = collections.defaultdict(list)
   process_bundle_id = instruction_request.instruction_id
 
   worker_handler = _get_worker_handler(
@@ -75,14 +75,14 @@ def ray_execute_bundle(
 
   _send_timers(worker_handler, input_bundle, stage_timers, process_bundle_id)
 
-  inputs = {
-    k: _fetch_decode_data(runner_context, k, buffer_id, coder_id)
-    for k, (buffer_id, coder_id) in transform_buffer_coder.items()
+  input_data = {
+    k: _fetch_decode_data(runner_context, _get_input_id(transform_buffer_coder[k][0], k), transform_buffer_coder[k][1], objrefs)
+    for k, objrefs in input_bundle.input_data.items()
   }
 
-  for transform_id, elements in inputs.items():
+  for transform_id, elements in input_data.items():
     data_out = worker_handler.data_conn.output_stream(
-        process_bundle_id, transform_id)
+      process_bundle_id, transform_id)
     for byte_stream in elements:
       data_out.write(byte_stream)
     data_out.close()
@@ -103,16 +103,80 @@ def ray_execute_bundle(
       output_buffers[expected_outputs[output.transform_id]].append(output.data)
 
   for pcoll, buffer in output_buffers.items():
-    runner_context.pcollection_buffers.put.remote(pcoll, [ray.put(buffer)])
+    objrefs = [ray.put(buffer)]
+    runner_context.pcollection_buffers.put.remote(pcoll, objrefs)
+    output_buffers[pcoll] = objrefs
 
-  return result_future.get().SerializeToString(), list(output_buffers.keys())
+  result: beam_fn_api_pb2.InstructionResponse = result_future.get()
+
+  # Now we collect all the deferred inputs remaining from bundle execution.
+  # Deferred inputs can be:
+  # - timers
+  # - SDK-initiated deferred applications of root elements
+  # - # TODO: Runner-initiated deferred applications of root elements
+  delayed_applications = _retrieve_delayed_applications(
+    result,
+    runner_context.worker_manager.process_bundle_descriptor(
+      instruction_request_repr['process_descriptor_id']),
+    runner_context)
+
+  return result.SerializeToString(), list(output_buffers.keys()), delayed_applications
 
 
-def _fetch_decode_data(runner_context, transform_name, buffer_id, coder_id):
+def _retrieve_delayed_applications(
+    bundle_result: beam_fn_api_pb2.InstructionResponse,
+    process_bundle_descriptor: beam_fn_api_pb2.ProcessBundleDescriptor,
+    runner_context: 'RayRunnerExecutionContext'):
+  """Extract delayed applications from a bundle run.
+
+  A delayed application represents a user-initiated checkpoint, where user code
+  delays the consumption of a data element to checkpoint the previous elements
+  in a bundle.
+  """
+  delayed_bundles = {}
+  for delayed_application in bundle_result.process_bundle.residual_roots:
+    # TODO(pabloem): Time delay needed for streaming. For now we'll ignore it.
+    time_delay = delayed_application.requested_time_delay
+    transform = process_bundle_descriptor.transforms[
+      delayed_application.application.transform_id]
+    pcoll_name = transform.inputs[delayed_application.application.input_id]
+
+    consumer_transform = translations.only_element([
+      read_id for read_id, proto in process_bundle_descriptor.transforms.items()
+      if proto.spec.urn == bundle_processor.DATA_INPUT_URN
+         and pcoll_name in proto.outputs.values()])
+    if consumer_transform not in delayed_bundles:
+      delayed_bundles[consumer_transform] = []
+    delayed_bundles[consumer_transform].append(delayed_application.application.element)
+
+  for consumer, data in delayed_bundles.items():
+    ref = ray.put([data])
+    runner_context.pcollection_buffers.put.remote(consumer, [ref])
+    delayed_bundles[consumer] = ref
+
+  return delayed_bundles
+
+
+def _get_input_id(buffer_id, transform_name):
+  """Get the 'buffer_id' for the input data we're retrieving.
+
+  For most data, the buffer ID is as expected, but for IMPULSE readers, the
+  buffer ID is the consumer name.
+  """
+  if isinstance(buffer_id, bytes) and (
+      buffer_id.startswith(b'materialize') or buffer_id.startswith(b'timer') or buffer_id.startswith(b'group')):
+    buffer_id = buffer_id
+  else:
+    buffer_id = transform_name.encode('ascii')
+  return buffer_id
+
+
+def _fetch_decode_data(runner_context: 'RayRunnerExecutionContext', buffer_id: bytes, coder_id: str, data_references: List[ray.ObjectRef]):
+  """Fetch a PCollection's data and decode it."""
   if buffer_id.startswith(b'group'):
     _, pcoll_id = translations.split_buffer_id(buffer_id)
     transform = runner_context.pipeline_components.transforms[pcoll_id]
-    out_pcoll = runner_context.pipeline_components.pcollections[transform.outputs['None']]
+    out_pcoll = runner_context.pipeline_components.pcollections[translations.only_element(transform.outputs.values())]
     windowing_strategy = runner_context.pipeline_components.windowing_strategies[out_pcoll.windowing_strategy_id]
     postcoder = runner_context.pipeline_context.coders[coder_id]
     precoder = coders.WindowedValueCoder(
@@ -127,15 +191,8 @@ def _fetch_decode_data(runner_context, transform_name, buffer_id, coder_id):
       windowing=apache_beam.Windowing.from_runner_api(windowing_strategy, None),
     )
   else:
-    if isinstance(buffer_id, bytes) and (
-        buffer_id.startswith(b'materialize') or buffer_id.startswith(b'timer')):
-      buffer_id = buffer_id
-    else:
-      buffer_id = transform_name
-
     buffer = fn_execution.ListBuffer(coder_impl=runner_context.pipeline_context.coders[coder_id].get_impl())
 
-  data_references = ray.get(runner_context.pcollection_buffers.get.remote(buffer_id))
   for block in ray.get(data_references):
     # TODO(pabloem): Stop using ListBuffer, and use different buffers to pass data to Beam
     for elm in block:
@@ -143,7 +200,11 @@ def _fetch_decode_data(runner_context, transform_name, buffer_id, coder_id):
   return buffer
 
 
-def _send_timers(worker_handler: worker_handlers.WorkerHandler, input_bundle: 'Bundle', stage_timers: Mapping[translations.TimerFamilyId, bytes], process_bundle_id):
+def _send_timers(worker_handler: worker_handlers.WorkerHandler,
+                 input_bundle: 'Bundle',
+                 stage_timers: Mapping[translations.TimerFamilyId, bytes],
+                 process_bundle_id) -> None:
+  """Pass timers to the worker for processing."""
   for transform_id, timer_family_id in stage_timers.keys():
     timer_out = worker_handler.data_conn.output_timer_stream(
       process_bundle_id, transform_id, timer_family_id)
@@ -373,4 +434,4 @@ def _get_worker_handler(runner_context: RayRunnerExecutionContext, bundle_descri
 @dataclasses.dataclass
 class Bundle:
   input_timers: Mapping[translations.TimerFamilyId, fn_execution.PartitionableBuffer]
-  input_data: Mapping[str, fn_execution.PartitionableBuffer]
+  input_data: Mapping[str, List[ray.ObjectRef]]

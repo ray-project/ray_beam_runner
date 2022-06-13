@@ -31,6 +31,9 @@ from apache_beam.utils import proto_utils
 import ray
 from ray_beam_runner.portability.execution import RayRunnerExecutionContext
 
+ENCODED_IMPULSE_REFERENCE = ray.put([fn_execution.ENCODED_IMPULSE_VALUE])
+
+
 class RayBundleContextManager:
 
   def __init__(self,
@@ -126,10 +129,9 @@ class RayBundleContextManager:
           coder_id = self.execution_context.data_channel_coders[translations.only_element(
               transform.outputs.values())]
           if pcoll_id == translations.IMPULSE_BUFFER:
-            data_ref = ray.put([fn_execution.ENCODED_IMPULSE_VALUE])
-            self.execution_context.pcollection_buffers.put.remote(
-              transform.unique_name, [data_ref])
             pcoll_id = transform.unique_name.encode('utf8')
+            self.execution_context.pcollection_buffers.put.remote(
+              pcoll_id, [ENCODED_IMPULSE_REFERENCE])
           else:
             pass
           transform_to_buffer_coder[transform.unique_name] = (

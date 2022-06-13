@@ -27,7 +27,7 @@ from apache_beam.runners.portability.fn_api_runner import execution as fn_execut
 from apache_beam.runners.portability.fn_api_runner import translations
 from apache_beam.runners.portability.fn_api_runner import worker_handlers
 from apache_beam.runners.portability.fn_api_runner.execution import PartitionableBuffer
-from apache_beam.runners.portability.fn_api_runner.execution import OutputTimers
+from apache_beam.runners.portability.fn_api_runner.fn_runner import OutputTimers
 from apache_beam.runners.portability.fn_api_runner.translations import DataOutput
 from apache_beam.runners.portability.fn_api_runner.translations import TimerFamilyId
 from apache_beam.runners.worker import bundle_processor

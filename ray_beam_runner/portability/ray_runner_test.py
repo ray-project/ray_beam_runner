@@ -65,6 +65,7 @@ from apache_beam.utils import timestamp
 import ray_beam_runner.portability.ray_fn_runner
 import ray
 
+
 if statesampler.FAST_SAMPLER:
     DEFAULT_SAMPLING_PERIOD_MS = statesampler.DEFAULT_SAMPLING_PERIOD_MS
 else:
@@ -567,7 +568,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
                 # Assert that each grouping consists of elements belonging to the
                 # same window to ensure states and timers were properly partitioned.
                 for b in actual:
-                    parity = set(ord(e) % 2 for e in b)
+                    parity = {ord(e) % 2 for e in b}
                     self.assertEqual(1, len(parity), b)
 
         with self.create_pipeline() as p:
@@ -663,7 +664,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
                     cur += 1
                     return
 
-        with self.assertRaises(Exception):
+        with self.assertRaisesRegex(ValueError, "is not done"):
             with self.create_pipeline() as p:
                 data = ["abc", "defghijklmno", "pqrstuv", "wxyz"]
                 _ = p | beam.Create(data) | beam.ParDo(ExpandingStringsDoFn())
@@ -1192,7 +1193,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
         )
 
         counters = res.metrics().query(beam.metrics.MetricsFilter())["counters"]
-        step_names = set(m.key.step for m in counters if m.key.step)
+        step_names = {m.key.step for m in counters if m.key.step}
         pipeline_options = p._options
         if assert_using_counter_names:
             if pipeline_options.view_as(StandardOptions).streaming:

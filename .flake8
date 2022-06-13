@@ -16,4 +16,5 @@ ignore =
   I
   N
 avoid-escape = no
-
+per-file-ignores =
+  *ray_runner_test.py: B008

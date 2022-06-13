@@ -1114,6 +1114,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
 # it makes the probability of sampling far too small
 # upon repeating bundle processing due to unncessarily incrementing
 # the sampling counter.
+@unittest.skip('Metrics not yet supported.')
 class RayRunnerMetricsTest(unittest.TestCase):
   @classmethod
   def setUpClass(cls) -> None:
@@ -1505,6 +1506,7 @@ class RayRunnerMetricsTest(unittest.TestCase):
       raise
 
 
+@unittest.skip('Runner-initiated splitting not yet supported')
 class RayRunnerSplitTest(unittest.TestCase):
   @classmethod
   def setUpClass(cls) -> None:

@@ -3,12 +3,12 @@ import unittest
 
 import ray
 
-import apache_beam.portability.api.beam_fn_api_pb2
+from apache_beam.portability.api import beam_fn_api_pb2
 from ray_beam_runner.portability.state import RayStateManager
 
 
 class StateHandlerTest(unittest.TestCase):
-    SAMPLE_STATE_KEY = apache_beam.portability.api.beam_fn_api_pb2.StateKey()
+    SAMPLE_STATE_KEY = beam_fn_api_pb2.StateKey()
     SAMPLE_INPUT_DATA = [b"bobby" b"tables", b"drop table", b"where table_name > 12345"]
 
     @classmethod

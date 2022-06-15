@@ -57,3 +57,10 @@ class StateHandlerTest(unittest.TestCase):
         hc.assert_that(
             all_data, hc.contains_exactly(*StateHandlerTest.SAMPLE_INPUT_DATA)
         )
+
+    def test_fresh_key(self):
+        sh = RayStateManager()
+        with sh.process_instruction_id("anyinstruction"):
+            data, continuation_token = sh.get_raw(StateHandlerTest.SAMPLE_STATE_KEY)
+        hc.assert_that(continuation_token, hc.equal_to(None))
+        hc.assert_that(data, hc.equal_to(b""))

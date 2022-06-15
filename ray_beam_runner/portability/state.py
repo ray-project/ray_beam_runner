@@ -19,11 +19,39 @@
 
 import collections
 import contextlib
-from typing import Optional, Tuple, Iterator
+from typing import Optional, Tuple, Iterator, TypeVar
 
 import ray
+from ray import ObjectRef
 from apache_beam.portability.api import beam_fn_api_pb2
 from apache_beam.runners.worker import sdk_worker
+
+T = TypeVar("T")
+
+
+class RayFuture(sdk_worker._Future[T]):
+    """Wraps a ray ObjectRef in a beam sdk_worker._Future"""
+
+    def __init__(self, object_ref):
+        # type: (ObjectRef[T]) -> None
+        self._object_ref: ObjectRef[T] = object_ref
+
+    def wait(self, timeout=None):
+        # type: (Optional[float]) -> bool
+        try:
+            ray.get(self._object_ref, timeout=timeout)
+            #
+            return True
+        except ray.GetTimeoutError:
+            return False
+
+    def get(self, timeout=None):
+        # type: (Optional[float]) -> T
+        return ray.get(self._object_ref, timeout=timeout)
+
+    def set(self, _value):
+        # type: (T) -> sdk_worker._Future[T]
+        raise NotImplementedError()
 
 
 @ray.remote
@@ -42,14 +70,16 @@ class _ActorStateManager:
         else:
             continuation_token = 0
 
-        new_cont_token = continuation_token + 1
-        if len(self._data[(bundle_id, state_key)]) == new_cont_token:
-            return self._data[(bundle_id, state_key)][continuation_token], None
+        full_state = self._data[(bundle_id, state_key)]
+        if len(full_state) == continuation_token:
+            return b"", None
+
+        if continuation_token + 1 == len(full_state):
+            next_cont_token = None
         else:
-            return (
-                self._data[(bundle_id, state_key)][continuation_token],
-                str(continuation_token + 1).encode("utf8"),
-            )
+            next_cont_token = str(continuation_token + 1).encode("utf8")
+
+        return full_state[continuation_token], next_cont_token
 
     def append_raw(self, bundle_id: str, state_key: str, data: bytes):
         self._data[(bundle_id, state_key)].append(data)
@@ -81,19 +111,20 @@ class RayStateManager(sdk_worker.StateHandler):
             )
         )
 
-    def append_raw(
-        self, state_key: beam_fn_api_pb2.StateKey, data: bytes
-    ) -> sdk_worker._Future:
+    def append_raw(self, state_key: beam_fn_api_pb2.StateKey, data: bytes) -> RayFuture:
         assert self._instruction_id is not None
-        return self._state_actor.append_raw.remote(
-            self._instruction_id, RayStateManager._to_key(state_key), data
+        return RayFuture(
+            self._state_actor.append_raw.remote(
+                self._instruction_id, RayStateManager._to_key(state_key), data
+            )
         )
 
-    def clear(self, state_key: beam_fn_api_pb2.StateKey) -> sdk_worker._Future:
-        # TODO(pabloem): Does the ray future work as a replacement of Beam _Future?
+    def clear(self, state_key: beam_fn_api_pb2.StateKey) -> RayFuture:
         assert self._instruction_id is not None
-        return self._state_actor.clear.remote(
-            self._instruction_id, RayStateManager._to_key(state_key)
+        return RayFuture(
+            self._state_actor.clear.remote(
+                self._instruction_id, RayStateManager._to_key(state_key)
+            )
         )
 
     @contextlib.contextmanager

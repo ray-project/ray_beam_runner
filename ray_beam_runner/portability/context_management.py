@@ -163,6 +163,7 @@ class RayBundleContextManager:
                         pcoll_id,
                         self.execution_context.safe_coders.get(coder_id, coder_id),
                     )
+
                 elif transform.spec.urn == bundle_processor.DATA_OUTPUT_URN:
                     data_output[transform.unique_name] = pcoll_id
                     coder_id = self.execution_context.data_channel_coders[
@@ -170,8 +171,10 @@ class RayBundleContextManager:
                     ]
                 else:
                     raise NotImplementedError
-                data_spec = beam_fn_api_pb2.RemoteGrpcPort(coder_id=coder_id)
-                transform.spec.payload = data_spec.SerializeToString()
+                if pcoll_id != translations.IMPULSE_BUFFER:
+                    data_spec = beam_fn_api_pb2.RemoteGrpcPort(coder_id=coder_id)
+                    transform.spec.payload = data_spec.SerializeToString()
+
             elif transform.spec.urn in translations.PAR_DO_URNS:
                 payload = proto_utils.parse_Bytes(
                     transform.spec.payload, beam_runner_api_pb2.ParDoPayload

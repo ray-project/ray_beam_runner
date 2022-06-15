@@ -228,7 +228,9 @@ class RayFnApiRunner(runner.PipelineRunner):
           bundle_context_manager (execution.BundleContextManager): A description of
             the stage to execute, and its context.
         """
+
         bundle_context_manager.setup()
+
         runner_execution_context.worker_manager.register_process_bundle_descriptor(
             bundle_context_manager.process_bundle_descriptor
         )
@@ -247,6 +249,8 @@ class RayFnApiRunner(runner.PipelineRunner):
             for k in bundle_context_manager.transform_to_buffer_coder
         }
 
+        watermark_manager = runner_execution_context.watermark_manager
+
         final_result = None  # type: Optional[beam_fn_api_pb2.InstructionResponse]
 
         while True:
@@ -263,19 +267,28 @@ class RayFnApiRunner(runner.PipelineRunner):
 
             final_result = merge_stage_results(final_result, last_result)
             if not delayed_applications and not fired_timers:
+                # Processing has completed; marking all outputs as completed
+                # TODO: why is it necessary to set both the watermark and
+                # the produced_watermark? How do they interact?
+                for output_pc in bundle_outputs:
+                    _, update_output_pc = translations.split_buffer_id(output_pc)
+                    watermark_manager.set_pcoll_produced_watermark.remote(
+                        update_output_pc, timestamp.MAX_TIMESTAMP
+                    )
                 break
             else:
-                # TODO: Enable following assertion after watermarking is implemented
-                # assert (ray.get(
-                # runner_execution_context.watermark_manager
-                # .get_stage_node.remote(
-                #     bundle_context_manager.stage.name)).output_watermark()
-                #         < timestamp.MAX_TIMESTAMP), (
-                #     'wrong timestamp for %s. '
-                #     % ray.get(
-                #     runner_execution_context.watermark_manager
-                #     .get_stage_node.remote(
-                #     bundle_context_manager.stage.name)))
+                assert (
+                    ray.get(
+                        watermark_manager.get_stage_node.remote(
+                            bundle_context_manager.stage.name
+                        )
+                    ).output_watermark()
+                    < timestamp.MAX_TIMESTAMP
+                ), "wrong timestamp for %s. " % ray.get(
+                    watermark_manager.get_stage_node.remote(
+                        bundle_context_manager.stage.name
+                    )
+                )
                 input_data = delayed_applications
                 input_timers = fired_timers
 
@@ -288,6 +301,20 @@ class RayFnApiRunner(runner.PipelineRunner):
         # )
         # TODO(pabloem): Make sure that side inputs are being stored somewhere.
         # runner_execution_context.commit_side_inputs_to_state(data_side_input)
+
+        # assert that the output watermark was correctly set for this stage
+        stage_node = ray.get(
+            runner_execution_context.watermark_manager.get_stage_node.remote(
+                bundle_context_manager.stage.name
+            )
+        )
+        assert (
+            stage_node.output_watermark() == timestamp.MAX_TIMESTAMP
+        ), "wrong output watermark for %s. Expected %s, but got %s." % (
+            stage_node,
+            timestamp.MAX_TIMESTAMP,
+            stage_node.output_watermark(),
+        )
 
         return final_result
 
@@ -351,6 +378,21 @@ class RayFnApiRunner(runner.PipelineRunner):
         #       deferred_inputs[other_input] = ListBuffer(
         #           coder_impl=bundle_context_manager.get_input_coder_impl(
         #               other_input))
+
+        # TODO: fill expected timers and pcolls with da
+        watermark_updates = fn_runner.FnApiRunner._build_watermark_updates(
+            runner_execution_context,
+            transform_to_buffer_coder.keys(),
+            bundle_context_manager.stage_timers.keys(),  # expected_timers
+            set(),  # pcolls_with_da
+            delayed_applications.keys(),
+            watermarks_by_transform_and_timer_family,
+        )
+
+        for pc_name, watermark in watermark_updates.items():
+            runner_execution_context.watermark_manager.set_pcoll_watermark.remote(
+                pc_name, watermark
+            )
 
         return result, newly_set_timers, delayed_applications, output
 

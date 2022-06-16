@@ -40,6 +40,12 @@ jobs:
       - name: Format
         run: |
           bash scripts/format.sh
+      - name: Install Ray Beam Runner
+        run: |
+          pip install -e .[test]
+      - name: Run Portability tests
+        run: |
+          pytest -r A ray_beam_runner/portability/ray_runner_test.py ray_beam_runner/portability/execution_test.py
 
   LicenseCheck:
     name: License Check

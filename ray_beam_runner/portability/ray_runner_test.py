@@ -368,7 +368,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
                 equal_to([("a", "a"), ("a", "b"), ("b", "a"), ("b", "b")]),
             )
 
-    @unittest.skip("State not yet supported")
     def test_pardo_state_only(self):
         index_state_spec = userstate.CombiningValueStateSpec("index", sum)
         value_and_index_state_spec = userstate.ReadModifyWriteStateSpec(

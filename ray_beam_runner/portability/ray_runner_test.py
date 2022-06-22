@@ -874,7 +874,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
             pc = p | beam.Create(["a", "b"])
             assert_that((pc, pc, pc) | beam.Flatten(), equal_to(["a", "b"] * 3))
 
-    @unittest.skip("Combiner lifting not yet supported")
     def test_combine_per_key(self):
         with self.create_pipeline() as p:
             res = (

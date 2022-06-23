@@ -433,7 +433,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
             # expected = [('fired', ts) for ts in (20, 200)]
             # assert_that(actual, equal_to(expected))
 
-    @unittest.skip("Timers not yet supported")
     def test_pardo_timers(self):
         timer_spec = userstate.TimerSpec("timer", userstate.TimeDomain.WATERMARK)
         state_spec = userstate.CombiningValueStateSpec("num_called", sum)
@@ -467,7 +466,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
             expected = [("fired", ts) for ts in (20, 200, 40, 400)]
             assert_that(actual, equal_to(expected))
 
-    @unittest.skip("Timers not yet supported")
     def test_pardo_timers_clear(self):
         timer_spec = userstate.TimerSpec("timer", userstate.TimeDomain.WATERMARK)
         clear_timer_spec = userstate.TimerSpec(
@@ -506,15 +504,12 @@ class RayFnApiRunnerTest(unittest.TestCase):
             expected = [("fired", ts) for ts in (20, 200)]
             assert_that(actual, equal_to(expected))
 
-    @unittest.skip("Timers not yet supported")
     def test_pardo_state_timers(self):
         self._run_pardo_state_timers(windowed=False)
 
-    @unittest.skip("Timers not yet supported")
     def test_pardo_state_timers_non_standard_coder(self):
         self._run_pardo_state_timers(windowed=False, key_type=Any)
 
-    @unittest.skip("Timers not yet supported")
     def test_windowed_pardo_state_timers(self):
         self._run_pardo_state_timers(windowed=True)
 
@@ -587,7 +582,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
 
             assert_that(actual, is_buffered_correctly)
 
-    @unittest.skip("Timers not yet supported")
     def test_pardo_dynamic_timer(self):
         class DynamicTimerDoFn(beam.DoFn):
             dynamic_timer_spec = userstate.TimerSpec(

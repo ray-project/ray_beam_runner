@@ -29,6 +29,7 @@ from typing import Optional
 from typing import Tuple
 from typing import Union
 
+from apache_beam.coders.coder_impl import create_OutputStream
 from apache_beam.options import pipeline_options
 from apache_beam.options.value_provider import RuntimeValueProvider
 from apache_beam.pipeline import Pipeline
@@ -42,7 +43,7 @@ from apache_beam.runners.portability.fn_api_runner import fn_runner
 from apache_beam.runners.portability.fn_api_runner import translations
 from apache_beam.runners.portability.fn_api_runner.execution import ListBuffer
 from apache_beam.transforms import environments
-from apache_beam.utils import proto_utils
+from apache_beam.utils import proto_utils, timestamp
 
 import ray
 from ray_beam_runner.portability.context_management import RayBundleContextManager
@@ -334,6 +335,11 @@ class RayFnApiRunner(runner.PipelineRunner):
         )
         result = beam_fn_api_pb2.InstructionResponse.FromString(result_str)
 
+        (
+            watermarks_by_transform_and_timer_family,
+            newly_set_timers,
+        ) = self._collect_written_timers(bundle_context_manager)
+
         # TODO(pabloem): Add support for splitting of results.
 
         # After collecting deferred inputs, we 'pad' the structure with empty
@@ -346,8 +352,83 @@ class RayFnApiRunner(runner.PipelineRunner):
         #           coder_impl=bundle_context_manager.get_input_coder_impl(
         #               other_input))
 
-        newly_set_timers = {}
         return result, newly_set_timers, delayed_applications, output
+
+    @staticmethod
+    def _collect_written_timers(
+        bundle_context_manager: RayBundleContextManager,
+    ) -> Tuple[
+        Dict[translations.TimerFamilyId, timestamp.Timestamp],
+        Mapping[translations.TimerFamilyId, execution.PartitionableBuffer],
+    ]:
+        """Review output buffers, and collect written timers.
+        This function reviews a stage that has just been run. The stage will have
+        written timers to its output buffers. The function then takes the timers,
+        and adds them to the `newly_set_timers` dictionary, and the
+        timer_watermark_data dictionary.
+        The function then returns the following two elements in a tuple:
+        - timer_watermark_data: A dictionary mapping timer family to upcoming
+            timestamp to fire.
+        - newly_set_timers: A dictionary mapping timer family to timer buffers
+            to be passed to the SDK upon firing.
+        """
+        timer_watermark_data = {}
+        newly_set_timers = {}
+
+        execution_context = bundle_context_manager.execution_context
+        buffer_manager = execution_context.pcollection_buffers
+
+        for (
+            transform_id,
+            timer_family_id,
+        ), buffer_id in bundle_context_manager.stage_timers.items():
+            timer_buffer = ray.get(buffer_manager.get.remote(buffer_id))
+
+            coder_id = bundle_context_manager._timer_coder_ids[
+                (transform_id, timer_family_id)
+            ]
+
+            coder = execution_context.pipeline_context.coders[coder_id]
+            timer_coder_impl = coder.get_impl()
+
+            timers_by_key_tag_and_window = {}
+            if len(timer_buffer) >= 1:
+                written_timers = ray.get(timer_buffer[0])
+                # clear the timer buffer
+                buffer_manager.clear.remote(buffer_id)
+
+                # deduplicate updates to the same timer
+                for elements_timers in written_timers:
+                    for decoded_timer in timer_coder_impl.decode_all(elements_timers):
+                        key_tag_win = (
+                            decoded_timer.user_key,
+                            decoded_timer.dynamic_timer_tag,
+                            decoded_timer.windows[0],
+                        )
+                        if not decoded_timer.clear_bit:
+                            timers_by_key_tag_and_window[key_tag_win] = decoded_timer
+                        elif (
+                            decoded_timer.clear_bit
+                            and key_tag_win in timers_by_key_tag_and_window
+                        ):
+                            del timers_by_key_tag_and_window[key_tag_win]
+            if not timers_by_key_tag_and_window:
+                continue
+
+            out = create_OutputStream()
+            for decoded_timer in timers_by_key_tag_and_window.values():
+                timer_coder_impl.encode_to_stream(decoded_timer, out, True)
+                timer_watermark_data[(transform_id, timer_family_id)] = min(
+                    timer_watermark_data.get(
+                        (transform_id, timer_family_id), timestamp.MAX_TIMESTAMP
+                    ),
+                    decoded_timer.hold_timestamp,
+                )
+
+            buf = ListBuffer(coder_impl=timer_coder_impl)
+            buf.append(out.get())
+            newly_set_timers[(transform_id, timer_family_id)] = buf
+        return timer_watermark_data, newly_set_timers
 
 
 class RayRunnerResult(runner.PipelineResult):

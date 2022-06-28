@@ -116,8 +116,8 @@ def ray_execute_bundle(
     ):
         if isinstance(output, beam_fn_api_pb2.Elements.Timers) and not dry_run:
             output_buffers[
-                expected_outputs[(output.transform_id, output.timer_family_id)]
-            ].append(output.data)
+                stage_timers[(output.transform_id, output.timer_family_id)]
+            ].append(output.timers)
         if isinstance(output, beam_fn_api_pb2.Elements.Data) and not dry_run:
             output_buffers[expected_outputs[output.transform_id]].append(output.data)
 
@@ -342,6 +342,9 @@ class PcollectionBufferManager:
     def get(self, pcoll) -> List[ray.ObjectRef]:
         return self.buffers[pcoll]
 
+    def clear(self, pcoll):
+        self.buffers[pcoll].clear()
+
 
 @ray.remote
 class RayWatermarkManager(watermark_manager.WatermarkManager):
@@ -450,6 +453,7 @@ class RayRunnerExecutionContext(object):
                     timer_coder_ids[
                         (transform_id, id)
                     ] = timer_family_spec.timer_family_coder_id
+        return timer_coder_ids
 
     def __reduce__(self):
         # We need to implement custom serialization for this particular class

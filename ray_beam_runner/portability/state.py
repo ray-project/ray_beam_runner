@@ -91,7 +91,8 @@ class _ActorStateManager:
 class RayStateManager(sdk_worker.StateHandler):
     def __init__(self, state_actor: Optional[_ActorStateManager] = None):
         self._state_actor = state_actor or _ActorStateManager.remote()
-        self._instruction_id: Optional[str] = None
+        # TODO(iasoon): how do we assign the correct instruction id for side inputs?
+        self._instruction_id: Optional[str] = "global"
 
     @staticmethod
     def _to_key(state_key: beam_fn_api_pb2.StateKey):
@@ -129,9 +130,9 @@ class RayStateManager(sdk_worker.StateHandler):
 
     @contextlib.contextmanager
     def process_instruction_id(self, bundle_id: str) -> Iterator[None]:
-        self._instruction_id = bundle_id
+        # self._instruction_id = bundle_id
         yield
-        self._instruction_id = None
+        # self._instruction_id = None
 
     def done(self):
         pass

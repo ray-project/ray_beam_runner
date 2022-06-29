@@ -30,6 +30,7 @@ from typing import List
 from typing import Mapping
 from typing import Optional
 from typing import Tuple
+from typing import TYPE_CHECKING
 
 import ray
 
@@ -42,11 +43,16 @@ from apache_beam.portability.api import beam_runner_api_pb2
 from apache_beam.runners import pipeline_context
 from apache_beam.runners.portability.fn_api_runner import execution as fn_execution
 from apache_beam.runners.portability.fn_api_runner import translations
+from apache_beam.runners.portability.fn_api_runner.translations import split_buffer_id
 from apache_beam.runners.portability.fn_api_runner import watermark_manager
 from apache_beam.runners.portability.fn_api_runner import worker_handlers
 from apache_beam.runners.worker import bundle_processor
 
+
 from ray_beam_runner.portability.state import RayStateManager
+
+if TYPE_CHECKING:
+    from apache_beam.runners.portability.fn_api_runner.translations import DataSideInput
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -482,6 +488,58 @@ class RayRunnerExecutionContext(object):
             )
 
         return (deserializer, data)
+
+    def commit_side_inputs_to_state(
+        self,
+        data_side_input,  # type: DataSideInput
+    ):
+        """
+        Store side inputs in the state manager so that they can be accessed by workers.
+        """
+
+        # type: (...) -> None
+        for (consuming_transform_id, tag), (
+            buffer_id,
+            func_spec,
+        ) in data_side_input.items():
+            _, pcoll_id = split_buffer_id(buffer_id)
+            value_coder = self.pipeline_context.coders[
+                self.safe_coders[self.data_channel_coders[pcoll_id]]
+            ]
+
+            elements_by_window = fn_execution.WindowGroupingBuffer(
+                func_spec, value_coder
+            )
+
+            pcoll_buffer = ray.get(self.pcollection_buffers.get.remote(buffer_id))
+            for bundle_ref in pcoll_buffer:
+                bundle_items = ray.get(bundle_ref)
+                for bundle_item in bundle_items:
+                    elements_by_window.append(bundle_item)
+
+            if func_spec.urn == common_urns.side_inputs.ITERABLE.urn:
+                for _, window, elements_data in elements_by_window.encoded_items():
+                    state_key = beam_fn_api_pb2.StateKey(
+                        iterable_side_input=beam_fn_api_pb2.StateKey.IterableSideInput(
+                            transform_id=consuming_transform_id,
+                            side_input_id=tag,
+                            window=window,
+                        )
+                    )
+                    self.state_servicer.append_raw(state_key, elements_data)
+            elif func_spec.urn == common_urns.side_inputs.MULTIMAP.urn:
+                for key, window, elements_data in elements_by_window.encoded_items():
+                    state_key = beam_fn_api_pb2.StateKey(
+                        multimap_side_input=beam_fn_api_pb2.StateKey.MultimapSideInput(
+                            transform_id=consuming_transform_id,
+                            side_input_id=tag,
+                            window=window,
+                            key=key,
+                        )
+                    )
+                    self.state_servicer.append_raw(state_key, elements_data)
+            else:
+                raise ValueError("Unknown access pattern: '%s'" % func_spec.urn)
 
 
 def merge_stage_results(

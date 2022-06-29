@@ -281,13 +281,10 @@ class RayFnApiRunner(runner.PipelineRunner):
 
         # Store the required downstream side inputs into state so it is accessible
         # for the worker when it runs bundles that consume this stage's output.
-        # data_side_input = (
-        #     runner_execution_context.side_input_descriptors_by_stage.get(
-        #         bundle_context_manager.stage.name, {}
-        #     )
-        # )
-        # TODO(pabloem): Make sure that side inputs are being stored somewhere.
-        # runner_execution_context.commit_side_inputs_to_state(data_side_input)
+        data_side_input = runner_execution_context.side_input_descriptors_by_stage.get(
+            bundle_context_manager.stage.name, {}
+        )
+        runner_execution_context.commit_side_inputs_to_state(data_side_input)
 
         return final_result
 

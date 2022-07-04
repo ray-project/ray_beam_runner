@@ -3,10 +3,10 @@ services:
   runner-img:
     build:
       context: ../
-      dockerfile: docker/image.Dockerfile
+      dockerfile: docker/runner-image.Dockerfile
     image: raybeamrunner:latest
   buildwheel-img:
     build:
       context: ../
-      dockerfile: docker/buildwheel.Dockerfile
+      dockerfile: docker/build-wheel.Dockerfile
     image: raybeamrunner-buildwheel:latest

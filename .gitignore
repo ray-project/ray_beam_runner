@@ -105,3 +105,6 @@ project-id
 *.csv
 *.csv.gz
 *.parquet
+
+build/*
+dist/*

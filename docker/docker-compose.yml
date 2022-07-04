@@ -1,0 +1,12 @@
+version: "3"
+services:
+  runner-img:
+    build:
+      context: ../
+      dockerfile: docker/image.Dockerfile
+    image: raybeamrunner:latest
+  buildwheel-img:
+    build:
+      context: ../
+      dockerfile: docker/buildwheel.Dockerfile
+    image: raybeamrunner-buildwheel:latest

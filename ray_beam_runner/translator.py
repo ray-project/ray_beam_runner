@@ -22,7 +22,7 @@ from apache_beam import (Create, Union, ParDo, Impulse, PTransform, WindowInto,
 from apache_beam.pipeline import AppliedPTransform, PipelineVisitor
 from apache_beam.pvalue import PBegin, TaggedOutput
 from apache_beam.runners.common import DoFnInvoker, \
-    DoFnSignature, DoFnContext, Receiver, _OutputProcessor
+    DoFnSignature, DoFnContext, Receiver, _OutputHandler
 from apache_beam.transforms.sideinputs import SideInputMap
 from ray.data.block import Block, BlockMetadata, BlockAccessor
 
@@ -194,7 +194,7 @@ class RayParDo(RayDataTranslation):
                 self.tagged_receivers = OneReceiver(self.values)
                 self.window_fn = window_fn
 
-                output_processor = _OutputProcessor(
+                output_processor = _OutputHandler(
                     window_fn=self.window_fn,
                     main_receivers=self.tagged_receivers[None],
                     tagged_receivers=self.tagged_receivers,
@@ -263,7 +263,7 @@ class RayParDo(RayDataTranslation):
 
             tagged_receivers = OneReceiver(values)
 
-            output_processor = _OutputProcessor(
+            output_processor = _OutputHandler(
                 window_fn=window_fn,
                 main_receivers=tagged_receivers[None],
                 tagged_receivers=tagged_receivers,

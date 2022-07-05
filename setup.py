@@ -18,9 +18,9 @@
 from setuptools import find_packages, setup
 
 TEST_REQUIREMENTS = [
-    'apache_beam[test]',
-    'pyhamcrest',
-    'pytest',
+    "apache_beam[test]",
+    "pyhamcrest",
+    "pytest",
 ]
 
 setup(
@@ -37,10 +37,8 @@ setup(
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
     ],
-    install_requires=[
-        "ray[data]", "apache_beam"
-    ],
+    install_requires=["ray[data]", "apache_beam"],
     extras_require={
-        'test': TEST_REQUIREMENTS,
-    }
+        "test": TEST_REQUIREMENTS,
+    },
 )

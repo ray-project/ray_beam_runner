@@ -14,17 +14,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-#
-FROM python:3.9.13-bullseye
 
-RUN apt update && \
-    apt install -y python3-setuptools python3-pip git \
-    default-jdk vim less \
-    gradle maven wget python3-virtualenv \
-    rsync less 
-    #openjdk-11-jdk
+import ray
 
-WORKDIR /root
 
-RUN wget https://go.dev/dl/go1.18.3.linux-amd64.tar.gz
-RUN rm -rf /usr/local/go && tar -C /usr/local -xzf go1.18.3.linux-amd64.tar.gz
+def run_pipeline():
+    return None
+
+
+def test_simple_benchmark(benchmark):
+    ray.init()
+
+    res = benchmark(run_pipeline)
+
+    ray.shutdown()
+    assert res is None

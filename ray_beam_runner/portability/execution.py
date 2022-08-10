@@ -299,8 +299,13 @@ class RayWorkerHandlerManager:
 
 
 class RayStage(translations.Stage):
+    def __init__(self, uid: str, *args):
+        super().__init__(*args)
+        self.uid = uid
+
     def __reduce__(self):
         data = (
+            self.uid,
             self.name,
             [t.SerializeToString() for t in self.transforms],
             self.downstream_side_inputs,
@@ -313,19 +318,21 @@ class RayStage(translations.Stage):
         def deserializer(*args):
             return RayStage(
                 args[0],
-                [beam_runner_api_pb2.PTransform.FromString(s) for s in args[1]],
-                args[2],
+                args[1],
+                [beam_runner_api_pb2.PTransform.FromString(s) for s in args[2]],
                 args[3],
                 args[4],
                 args[5],
                 args[6],
+                args[7],
             )
 
         return (deserializer, data)
 
     @staticmethod
-    def from_Stage(stage: translations.Stage):
+    def from_Stage(uid: str, stage: translations.Stage):
         return RayStage(
+            uid,
             stage.name,
             stage.transforms,
             stage.downstream_side_inputs,
@@ -335,6 +342,9 @@ class RayStage(translations.Stage):
             stage.environment,
             stage.forced_root,
         )
+
+    def get_process_bundle_id(self) -> str:
+        return "bundle_%s" % self.uid
 
 
 @ray.remote
@@ -399,7 +409,10 @@ class RayRunnerExecutionContext(object):
         )
         self.state_servicer = state_servicer or RayStateManager()
         self.stages = [
-            RayStage.from_Stage(s) if not isinstance(s, RayStage) else s for s in stages
+            RayStage.from_Stage(self.next_uid(), s)
+            if not isinstance(s, RayStage)
+            else s
+            for s in stages
         ]
         self.side_input_descriptors_by_stage = (
             fn_execution.FnApiRunnerExecutionContext._build_data_side_inputs_map(stages)
@@ -496,8 +509,12 @@ class RayRunnerExecutionContext(object):
         """
         Store side inputs in the state manager so that they can be accessed by workers.
         """
-
         # type: (...) -> None
+
+        transform_stage_mapping = {
+            t.unique_name: stage for stage in self.stages for t in stage.transforms
+        }
+
         for (consuming_transform_id, tag), (
             buffer_id,
             func_spec,
@@ -517,6 +534,8 @@ class RayRunnerExecutionContext(object):
                 for bundle_item in bundle_items:
                     elements_by_window.append(bundle_item)
 
+            stage = transform_stage_mapping[consuming_transform_id]
+            process_bundle_id = stage.get_process_bundle_id()
             if func_spec.urn == common_urns.side_inputs.ITERABLE.urn:
                 for _, window, elements_data in elements_by_window.encoded_items():
                     state_key = beam_fn_api_pb2.StateKey(
@@ -526,9 +545,14 @@ class RayRunnerExecutionContext(object):
                             window=window,
                         )
                     )
-                    self.state_servicer.append_raw(state_key, elements_data)
+                    with self.state_servicer.process_instruction_id(process_bundle_id):
+                        self.state_servicer.append_raw(state_key, elements_data)
             elif func_spec.urn == common_urns.side_inputs.MULTIMAP.urn:
-                for key, window, elements_data in elements_by_window.encoded_items():
+                for (
+                    key,
+                    window,
+                    elements_data,
+                ) in elements_by_window.encoded_items():
                     state_key = beam_fn_api_pb2.StateKey(
                         multimap_side_input=beam_fn_api_pb2.StateKey.MultimapSideInput(
                             transform_id=consuming_transform_id,
@@ -537,7 +561,8 @@ class RayRunnerExecutionContext(object):
                             key=key,
                         )
                     )
-                    self.state_servicer.append_raw(state_key, elements_data)
+                    with self.state_servicer.process_instruction_id(process_bundle_id):
+                        self.state_servicer.append_raw(state_key, elements_data)
             else:
                 raise ValueError("Unknown access pattern: '%s'" % func_spec.urn)
 

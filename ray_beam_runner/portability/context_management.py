@@ -34,7 +34,7 @@ from apache_beam.runners.worker import bundle_processor
 from apache_beam.utils import proto_utils
 
 import ray
-from ray_beam_runner.portability.execution import RayRunnerExecutionContext, RayStage
+from ray_beam_runner.portability.execution import RayRunnerExecutionContext
 
 ENCODED_IMPULSE_REFERENCE = ray.put([fn_execution.ENCODED_IMPULSE_VALUE])
 
@@ -43,15 +43,12 @@ class RayBundleContextManager:
     def __init__(
         self,
         execution_context: RayRunnerExecutionContext,
-        stage: RayStage,
+        stage: translations.Stage,
     ) -> None:
         self.execution_context = execution_context
         self.stage = stage
         # self.extract_bundle_inputs_and_outputs()
-
-        # TODO(iasoon): are these actually equivalent?
-        # if so, this attribute can probably be dropped
-        self.bundle_uid = stage.uid
+        self.bundle_uid = self.execution_context.next_uid()
 
         # Properties that are lazily initialized
         self._process_bundle_descriptor = (

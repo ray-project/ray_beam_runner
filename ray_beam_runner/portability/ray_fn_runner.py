@@ -206,7 +206,7 @@ class RayFnApiRunner(runner.PipelineRunner):
         queue = collections.deque()
 
         try:
-            for stage in runner_execution_context.stages:
+            for stage in stages:
                 bundle_ctx = RayBundleContextManager(runner_execution_context, stage)
                 self._run_stage(runner_execution_context, bundle_ctx, queue)
         finally:
@@ -311,7 +311,9 @@ class RayFnApiRunner(runner.PipelineRunner):
         )
 
         # TODO(pabloem): Are there two different IDs? the Bundle ID and PBD ID?
-        process_bundle_id = bundle_context_manager.stage.get_process_bundle_id()
+        process_bundle_id = (
+            "bundle_%s" % bundle_context_manager.process_bundle_descriptor.id
+        )
 
         pbd_id = bundle_context_manager.process_bundle_descriptor.id
         (result_str, output, delayed_applications) = ray.get(

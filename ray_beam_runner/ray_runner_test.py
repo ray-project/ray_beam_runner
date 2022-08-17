@@ -88,7 +88,7 @@ class RayFnRunnerTest(fn_runner_test.FnApiRunnerTest):
     def setUp(self) -> None:
         import ray
         if not ray.is_initialized():
-            ray.init(local_mode=True)
+            ray.init()
 
     def create_pipeline(self, is_drain=False):
         return beam.Pipeline(
@@ -100,7 +100,7 @@ class RayRunnerTest(unittest.TestCase):
     def setUp(self) -> None:
         import ray
         if not ray.is_initialized():
-            ray.init(local_mode=True)
+            ray.init()
 
     def create_pipeline(self, is_drain=False):
         return beam.Pipeline(

@@ -45,7 +45,22 @@ jobs:
           pip install -e .[test]
       - name: Run Portability tests
         run: |
-          pytest -r A ray_beam_runner/portability/ray_runner_test.py ray_beam_runner/portability/execution_test.py
+          pytest -r A ray_beam_runner/portability/ray_runner_test.py ray_beam_runner/portability/execution_test.py || true
+      - name: Run Benchmark
+        run: |
+          pytest benchmark/simple.py --benchmark-only --benchmark-json bm-result.json
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Python Benchmark with pytest-benchmark
+          tool: 'pytest'
+          output-file-path: bm-result.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          # Show alert with commit comment on detecting possible performance regression
+          alert-threshold: '200%'
+          comment-on-alert: true
+          fail-on-alert: true
 
   LicenseCheck:
     name: License Check

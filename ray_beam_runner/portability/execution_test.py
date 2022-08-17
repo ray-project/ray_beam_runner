@@ -43,7 +43,7 @@ class StateHandlerTest(unittest.TestCase):
             for data in StateHandlerTest.SAMPLE_INPUT_DATA:
                 sh.append_raw(StateHandlerTest.SAMPLE_STATE_KEY, data)
 
-        with sh.process_instruction_id("anyinstruction"):
+        with sh.process_instruction_id("otherinstruction"):
             continuation_token = None
             all_data = []
             while True:

@@ -97,7 +97,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         if not ray.is_initialized():
-            ray.init(local_mode=True)
+            ray.init()
 
     def create_pipeline(self, is_drain=False):
         return beam.Pipeline(
@@ -1213,7 +1213,7 @@ class RayRunnerMetricsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         if not ray.is_initialized():
-            ray.init(local_mode=True)
+            ray.init()
 
     def assert_has_counter(self, mon_infos, urn, labels, value=None, ge_value=None):
         found = 0
@@ -1634,7 +1634,7 @@ class RayRunnerSplitTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         if not ray.is_initialized():
-            ray.init(local_mode=True)
+            ray.init()
 
     def create_pipeline(self, is_drain=False):
         return beam.Pipeline(

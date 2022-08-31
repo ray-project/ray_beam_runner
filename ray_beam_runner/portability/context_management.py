@@ -33,10 +33,7 @@ from apache_beam.runners.portability.fn_api_runner.translations import TimerFami
 from apache_beam.runners.worker import bundle_processor
 from apache_beam.utils import proto_utils
 
-import ray
 from ray_beam_runner.portability.execution import RayRunnerExecutionContext
-
-ENCODED_IMPULSE_REFERENCE = ray.put([fn_execution.ENCODED_IMPULSE_VALUE])
 
 
 class RayBundleContextManager:
@@ -155,7 +152,7 @@ class RayBundleContextManager:
                     if pcoll_id == translations.IMPULSE_BUFFER:
                         pcoll_id = transform.unique_name.encode("utf8")
                         self.execution_context.pcollection_buffers.put.remote(
-                            pcoll_id, [ENCODED_IMPULSE_REFERENCE]
+                            pcoll_id, [self.execution_context.encoded_impulse_ref]
                         )
                     else:
                         pass

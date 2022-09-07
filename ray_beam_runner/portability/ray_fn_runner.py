@@ -44,6 +44,7 @@ from apache_beam.runners.portability.fn_api_runner import translations
 from apache_beam.runners.portability.fn_api_runner.execution import ListBuffer
 from apache_beam.transforms import environments
 from apache_beam.utils import proto_utils, timestamp
+from apache_beam.runners.worker import bundle_processor
 
 import ray
 from ray_beam_runner.portability.context_management import RayBundleContextManager
@@ -237,12 +238,8 @@ class RayFnApiRunner(runner.PipelineRunner):
         ] = {}
 
         input_data = {
-            k: ray.get(
-                runner_execution_context.pcollection_buffers.get.remote(
-                    _get_input_id(
-                        bundle_context_manager.transform_to_buffer_coder[k][0], k
-                    )
-                )
+            k: runner_execution_context.pcollection_buffers.get(
+                _get_input_id(bundle_context_manager.transform_to_buffer_coder[k][0], k)
             )
             for k in bundle_context_manager.transform_to_buffer_coder
         }
@@ -313,27 +310,60 @@ class RayFnApiRunner(runner.PipelineRunner):
             static=False
         )
 
-        # TODO(pabloem): Are there two different IDs? the Bundle ID and PBD ID?
-        process_bundle_id = (
-            "bundle_%s" % bundle_context_manager.process_bundle_descriptor.id
-        )
+        process_bundle_descriptor = bundle_context_manager.process_bundle_descriptor
 
-        pbd_id = bundle_context_manager.process_bundle_descriptor.id
-        (result_str, output, delayed_applications) = ray.get(
-            ray_execute_bundle.remote(
-                runner_execution_context,
-                input_bundle,
-                transform_to_buffer_coder,
-                data_output,
-                stage_timers,
-                instruction_request_repr={
-                    "instruction_id": process_bundle_id,
-                    "process_descriptor_id": pbd_id,
-                    "cache_token": next(cache_token_generator),
-                },
-            )
+        # TODO(pabloem): Are there two different IDs? the Bundle ID and PBD ID?
+        process_bundle_id = "bundle_%s" % process_bundle_descriptor.id
+
+        pbd_id = process_bundle_descriptor.id
+        num_input_transforms = len(
+            [
+                proto
+                for proto in process_bundle_descriptor.transforms.values()
+                if proto.spec.urn == bundle_processor.DATA_INPUT_URN
+            ]
         )
-        result = beam_fn_api_pb2.InstructionResponse.FromString(result_str)
+        num_returns = (
+            1 + len(data_output) * 2 + len(stage_timers) * 2 + num_input_transforms * 2
+        )
+        returns = ray_execute_bundle.options(num_returns=num_returns).remote(
+            runner_execution_context,
+            input_bundle,
+            transform_to_buffer_coder,
+            data_output,
+            stage_timers,
+            instruction_request_repr={
+                "instruction_id": process_bundle_id,
+                "process_descriptor_id": pbd_id,
+                "cache_token": next(cache_token_generator),
+            },
+        )
+        if num_returns == 1:
+            # When num_returns is 1, Ray returns the entire tuple as a single object.
+            result = beam_fn_api_pb2.InstructionResponse.FromString(ray.get(returns)[0])
+        else:
+            result = beam_fn_api_pb2.InstructionResponse.FromString(ray.get(returns[0]))
+        output = []
+        for i in range(len(data_output) + len(stage_timers)):
+            pcoll = ray.get(returns[(i * 2) + 1])
+            if pcoll is None:
+                continue
+            data_ref = returns[(i * 2 + 1) + 1]
+            output.append(pcoll)
+            runner_execution_context.pcollection_buffers.put(pcoll, [data_ref])
+
+        delayed_applications = {}
+        for i in range(num_input_transforms):
+            pcoll = ray.get(
+                returns[(i * 2) + (1 + len(data_output) * 2 + len(stage_timers) * 2)]
+            )
+            if pcoll is None:
+                continue
+            data_ref = returns[
+                (i * 2 + 1) + (1 + len(data_output) * 2 + len(stage_timers) * 2)
+            ]
+            delayed_applications[pcoll] = data_ref
+            runner_execution_context.pcollection_buffers.put(pcoll, [data_ref])
 
         (
             watermarks_by_transform_and_timer_family,
@@ -382,7 +412,7 @@ class RayFnApiRunner(runner.PipelineRunner):
             transform_id,
             timer_family_id,
         ), buffer_id in bundle_context_manager.stage_timers.items():
-            timer_buffer = ray.get(buffer_manager.get.remote(buffer_id))
+            timer_buffer = buffer_manager.get(buffer_id)
 
             coder_id = bundle_context_manager._timer_coder_ids[
                 (transform_id, timer_family_id)
@@ -395,7 +425,7 @@ class RayFnApiRunner(runner.PipelineRunner):
             if len(timer_buffer) >= 1:
                 written_timers = ray.get(timer_buffer[0])
                 # clear the timer buffer
-                buffer_manager.clear.remote(buffer_id)
+                buffer_manager.clear(buffer_id)
 
                 # deduplicate updates to the same timer
                 for elements_timers in written_timers:

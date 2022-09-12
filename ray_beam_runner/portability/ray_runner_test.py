@@ -94,10 +94,12 @@ def has_urn_and_labels(mi, urn, labels):
 
 
 class RayFnApiRunnerTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
+    def setUp(self) -> None:
         if not ray.is_initialized():
-            ray.init()
+            ray.init(num_cpus=1, include_dashboard=False)
+
+    def tearDown(self) -> None:
+        ray.shutdown()
 
     def create_pipeline(self, is_drain=False):
         return beam.Pipeline(
@@ -1210,10 +1212,12 @@ class RayFnApiRunnerTest(unittest.TestCase):
 # the sampling counter.
 @unittest.skip("Metrics not yet supported.")
 class RayRunnerMetricsTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
+    def setUp(self) -> None:
         if not ray.is_initialized():
-            ray.init()
+            ray.init(num_cpus=1, include_dashboard=False)
+
+    def tearDown(self) -> None:
+        ray.shutdown()
 
     def assert_has_counter(self, mon_infos, urn, labels, value=None, ge_value=None):
         found = 0
@@ -1631,10 +1635,12 @@ class RayRunnerMetricsTest(unittest.TestCase):
 
 @unittest.skip("Runner-initiated splitting not yet supported")
 class RayRunnerSplitTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
+    def setUp(self) -> None:
         if not ray.is_initialized():
-            ray.init()
+            ray.init(num_cpus=1, include_dashboard=False)
+
+    def tearDown(self) -> None:
+        ray.shutdown()
 
     def create_pipeline(self, is_drain=False):
         return beam.Pipeline(
@@ -2072,8 +2078,6 @@ class ExpectingSideInputsFn(beam.DoFn):
             raise ValueError(f"Missing data in side input {side_inputs}")
         yield self._name
 
-
-logging.getLogger().setLevel(logging.INFO)
 
 if __name__ == "__main__":
     logging.getLogger().setLevel(logging.INFO)

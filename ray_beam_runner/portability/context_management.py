@@ -151,7 +151,7 @@ class RayBundleContextManager:
                     ]
                     if pcoll_id == translations.IMPULSE_BUFFER:
                         pcoll_id = transform.unique_name.encode("utf8")
-                        self.execution_context.pcollection_buffers.put.remote(
+                        self.execution_context.pcollection_buffers.put(
                             pcoll_id, [self.execution_context.encoded_impulse_ref]
                         )
                     else:

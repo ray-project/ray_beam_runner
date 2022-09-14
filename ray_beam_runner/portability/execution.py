@@ -435,6 +435,7 @@ class RayRunnerExecutionContext(object):
         self._uid = 0
         self.worker_manager = worker_manager or RayWorkerHandlerManager()
         self.timer_coder_ids = self._build_timer_coders_id_map()
+        self.encoded_impulse_ref = ray.put([fn_execution.ENCODED_IMPULSE_VALUE])
 
     @property
     def watermark_manager(self):

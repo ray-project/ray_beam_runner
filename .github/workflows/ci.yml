@@ -45,7 +45,7 @@ jobs:
           pip install -e .[test]
       - name: Run Portability tests
         run: |
-          pytest -r A ray_beam_runner/portability/ray_runner_test.py ray_beam_runner/portability/execution_test.py || true
+          pytest -r A ray_beam_runner/portability/ray_runner_test.py ray_beam_runner/portability/execution_test.py
       - name: Run Benchmark
         run: |
           pytest benchmark/simple.py --benchmark-only --benchmark-json bm-result.json

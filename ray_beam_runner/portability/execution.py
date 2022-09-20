@@ -25,7 +25,6 @@ import itertools
 import logging
 import random
 import typing
-from typing import Any
 from typing import List
 from typing import Mapping
 from typing import Optional
@@ -60,7 +59,7 @@ def ray_execute_bundle(
     stage_timers: Mapping[translations.TimerFamilyId, bytes],
     instruction_request_repr: Mapping[str, typing.Any],
     dry_run=False,
-) -> Tuple[str, List[Any], Mapping[str, ray.ObjectRef]]:
+) -> Tuple[str, ...]:  # (serialized InstructionResponse, repeat of pcoll, data)
 
     instruction_request = beam_fn_api_pb2.InstructionRequest(
         instruction_id=instruction_request_repr["instruction_id"],
@@ -121,27 +120,46 @@ def ray_execute_bundle(
         if isinstance(output, beam_fn_api_pb2.Elements.Data) and not dry_run:
             output_buffers[expected_outputs[output.transform_id]].append(output.data)
 
-    for pcoll, buffer in output_buffers.items():
-        objrefs = [ray.put(buffer)]
-        runner_context.pcollection_buffers.put.remote(pcoll, objrefs)
-        output_buffers[pcoll] = objrefs
-
     result: beam_fn_api_pb2.InstructionResponse = result_future.get()
+    returns = (result.SerializeToString(),)
+
+    for pcoll, buffer in output_buffers.items():
+        returns = returns + (pcoll, buffer)
+
+    # Some expected outputs might be empty so fill them with Nones.
+    for _ in range(len(output_buffers), (len(expected_outputs) + len(stage_timers))):
+        returns = returns + (None, None)
 
     # Now we collect all the deferred inputs remaining from bundle execution.
     # Deferred inputs can be:
     # - timers
     # - SDK-initiated deferred applications of root elements
     # - # TODO: Runner-initiated deferred applications of root elements
+    process_bundle_descriptor = runner_context.worker_manager.process_bundle_descriptor(
+        instruction_request_repr["process_descriptor_id"]
+    )
     delayed_applications = _retrieve_delayed_applications(
         result,
-        runner_context.worker_manager.process_bundle_descriptor(
-            instruction_request_repr["process_descriptor_id"]
-        ),
+        process_bundle_descriptor,
         runner_context,
     )
 
-    return result.SerializeToString(), list(output_buffers.keys()), delayed_applications
+    # Max possible number of delayed applications.
+    num_input_transforms = len(
+        [
+            proto
+            for proto in process_bundle_descriptor.transforms.values()
+            if proto.spec.urn == bundle_processor.DATA_INPUT_URN
+        ]
+    )
+    for pcoll, buffer in delayed_applications.items():
+        returns = returns + (pcoll, buffer)
+    # Caller expects num_input_transforms number of delayed applications,
+    # so fill the remaining with Nones.
+    for _ in range(len(delayed_applications), num_input_transforms):
+        returns = returns + (None, None)
+
+    return returns
 
 
 def _retrieve_delayed_applications(
@@ -179,9 +197,7 @@ def _retrieve_delayed_applications(
         )
 
     for consumer, data in delayed_bundles.items():
-        ref = ray.put([data])
-        runner_context.pcollection_buffers.put.remote(consumer, [ref])
-        delayed_bundles[consumer] = ref
+        delayed_bundles[consumer] = [data]
 
     return delayed_bundles
 
@@ -331,7 +347,6 @@ class RayStage(translations.Stage):
         )
 
 
-@ray.remote
 class PcollectionBufferManager:
     def __init__(self):
         self.buffers = collections.defaultdict(list)
@@ -388,9 +403,7 @@ class RayRunnerExecutionContext(object):
             ),
         )
 
-        self.pcollection_buffers = (
-            pcollection_buffers or PcollectionBufferManager.remote()
-        )
+        self.pcollection_buffers = pcollection_buffers or PcollectionBufferManager()
         self.state_servicer = state_servicer or RayStateManager()
         self.stages = [
             RayStage.from_Stage(s) if not isinstance(s, RayStage) else s for s in stages

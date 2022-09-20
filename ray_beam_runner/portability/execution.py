@@ -60,7 +60,7 @@ def ray_execute_bundle(
     stage_timers: Mapping[translations.TimerFamilyId, bytes],
     instruction_request_repr: Mapping[str, typing.Any],
     dry_run=False,
-) -> Tuple[str, Any, Any]:  # (serialized InstructionResponse, repeat of pcoll, data)
+) -> Tuple[str, ...]:  # (serialized InstructionResponse, repeat of pcoll, data)
 
     instruction_request = beam_fn_api_pb2.InstructionRequest(
         instruction_id=instruction_request_repr["instruction_id"],

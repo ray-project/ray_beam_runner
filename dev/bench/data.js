@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1663129911159,
+  "lastUpdate": 1663686092375,
   "repoUrl": "https://github.com/ray-project/ray_beam_runner",
   "entries": {
     "Python Benchmark with pytest-benchmark": [
@@ -54,6 +54,33 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 1.2537819684740362e-8",
             "extra": "mean: 87.29043629931957 nsec\nrounds: 57472"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "ray-project",
+            "username": "ray-project"
+          },
+          "committer": {
+            "name": "ray-project",
+            "username": "ray-project"
+          },
+          "id": "199e70fd7608af498697d382ec19858c3867077b",
+          "message": "Let driver own pcollections",
+          "timestamp": "2022-09-13T18:00:58Z",
+          "url": "https://github.com/ray-project/ray_beam_runner/pull/41/commits/199e70fd7608af498697d382ec19858c3867077b"
+        },
+        "date": 1663686091805,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmark/simple.py::test_simple_benchmark",
+            "value": 10735320.889289128,
+            "unit": "iter/sec",
+            "range": "stddev: 2.475066680991662e-8",
+            "extra": "mean: 93.15045263321669 nsec\nrounds: 53476"
           }
         ]
       }

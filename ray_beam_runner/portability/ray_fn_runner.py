@@ -316,17 +316,7 @@ class RayFnApiRunner(runner.PipelineRunner):
         process_bundle_id = "bundle_%s" % process_bundle_descriptor.id
 
         pbd_id = process_bundle_descriptor.id
-        num_input_transforms = len(
-            [
-                proto
-                for proto in process_bundle_descriptor.transforms.values()
-                if proto.spec.urn == bundle_processor.DATA_INPUT_URN
-            ]
-        )
-        num_returns = (
-            1 + len(data_output) * 2 + len(stage_timers) * 2 + num_input_transforms * 2
-        )
-        returns = ray_execute_bundle.options(num_returns=num_returns).remote(
+        result_generator_ref = ray_execute_bundle.remote(
             runner_execution_context,
             input_bundle,
             transform_to_buffer_coder,
@@ -338,30 +328,22 @@ class RayFnApiRunner(runner.PipelineRunner):
                 "cache_token": next(cache_token_generator),
             },
         )
-        if num_returns == 1:
-            # When num_returns is 1, Ray returns the entire tuple as a single object.
-            result = beam_fn_api_pb2.InstructionResponse.FromString(ray.get(returns)[0])
-        else:
-            result = beam_fn_api_pb2.InstructionResponse.FromString(ray.get(returns[0]))
+        result_generator = iter(ray.get(result_generator_ref))
+        result = beam_fn_api_pb2.InstructionResponse.FromString(ray.get(next(result_generator)))
+
         output = []
-        for i in range(len(data_output) + len(stage_timers)):
-            pcoll = ray.get(returns[(i * 2) + 1])
-            if pcoll is None:
-                continue
-            data_ref = returns[(i * 2 + 1) + 1]
+        num_outputs = ray.get(next(result_generator))
+        for _ in range(num_outputs):
+            pcoll = ray.get(next(result_generator))
+            data_ref = next(result_generator)
             output.append(pcoll)
             runner_execution_context.pcollection_buffers.put(pcoll, [data_ref])
 
         delayed_applications = {}
-        for i in range(num_input_transforms):
-            pcoll = ray.get(
-                returns[(i * 2) + (1 + len(data_output) * 2 + len(stage_timers) * 2)]
-            )
-            if pcoll is None:
-                continue
-            data_ref = returns[
-                (i * 2 + 1) + (1 + len(data_output) * 2 + len(stage_timers) * 2)
-            ]
+        num_delayed_applications = ray.get(next(result_generator))
+        for _ in range(num_delayed_applications):
+            pcoll = ray.get(next(result_generator))
+            data_ref = next(result_generator)
             delayed_applications[pcoll] = data_ref
             runner_execution_context.pcollection_buffers.put(pcoll, [data_ref])
 

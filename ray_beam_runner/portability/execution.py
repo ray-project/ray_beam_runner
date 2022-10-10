@@ -28,7 +28,7 @@ import typing
 from typing import List
 from typing import Mapping
 from typing import Optional
-from typing import Tuple
+from typing import Generator
 
 import ray
 
@@ -50,7 +50,7 @@ from ray_beam_runner.portability.state import RayStateManager
 _LOGGER = logging.getLogger(__name__)
 
 
-@ray.remote
+@ray.remote(num_returns="dynamic")
 def ray_execute_bundle(
     runner_context: "RayRunnerExecutionContext",
     input_bundle: "Bundle",
@@ -59,7 +59,7 @@ def ray_execute_bundle(
     stage_timers: Mapping[translations.TimerFamilyId, bytes],
     instruction_request_repr: Mapping[str, typing.Any],
     dry_run=False,
-) -> Tuple[str, ...]:  # (serialized InstructionResponse, repeat of pcoll, data)
+) -> Generator: # (serialized InstructionResponse, # ouputs, repeat of pcoll, data, # delayed applications, repeat of pcoll, data)
 
     instruction_request = beam_fn_api_pb2.InstructionRequest(
         instruction_id=instruction_request_repr["instruction_id"],
@@ -121,14 +121,12 @@ def ray_execute_bundle(
             output_buffers[expected_outputs[output.transform_id]].append(output.data)
 
     result: beam_fn_api_pb2.InstructionResponse = result_future.get()
-    returns = (result.SerializeToString(),)
+    returns = [result.SerializeToString()]
 
+    returns.append(len(output_buffers))
     for pcoll, buffer in output_buffers.items():
-        returns = returns + (pcoll, buffer)
-
-    # Some expected outputs might be empty so fill them with Nones.
-    for _ in range(len(output_buffers), (len(expected_outputs) + len(stage_timers))):
-        returns = returns + (None, None)
+        returns.append(pcoll)
+        returns.append(buffer)
 
     # Now we collect all the deferred inputs remaining from bundle execution.
     # Deferred inputs can be:
@@ -144,22 +142,13 @@ def ray_execute_bundle(
         runner_context,
     )
 
-    # Max possible number of delayed applications.
-    num_input_transforms = len(
-        [
-            proto
-            for proto in process_bundle_descriptor.transforms.values()
-            if proto.spec.urn == bundle_processor.DATA_INPUT_URN
-        ]
-    )
+    returns.append(len(delayed_applications))
     for pcoll, buffer in delayed_applications.items():
-        returns = returns + (pcoll, buffer)
-    # Caller expects num_input_transforms number of delayed applications,
-    # so fill the remaining with Nones.
-    for _ in range(len(delayed_applications), num_input_transforms):
-        returns = returns + (None, None)
+        returns.append(pcoll)
+        returns.append(buffer)
 
-    return returns
+    for ret in returns:
+        yield ret
 
 
 def _retrieve_delayed_applications(

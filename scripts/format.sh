@@ -94,6 +94,7 @@ format_changed() {
 format_all() {
     black ray_beam_runner/
     flake8 --config=.flake8 ray_beam_runner
+    pylint ray_beam_runner/
 }
 
 # This flag formats individual files. --files *must* be the first command line

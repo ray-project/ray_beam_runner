@@ -81,7 +81,7 @@ jobs:
           comment-on-alert: true
           fail-on-alert: true
 
-  Build:
+  Tests:
     runs-on: ubuntu-latest
     strategy:
       matrix:

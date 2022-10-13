@@ -44,7 +44,6 @@ from apache_beam.runners.portability.fn_api_runner import translations
 from apache_beam.runners.portability.fn_api_runner.execution import ListBuffer
 from apache_beam.transforms import environments
 from apache_beam.utils import proto_utils, timestamp
-from apache_beam.runners.worker import bundle_processor
 
 import ray
 from ray_beam_runner.portability.context_management import RayBundleContextManager
@@ -278,13 +277,10 @@ class RayFnApiRunner(runner.PipelineRunner):
 
         # Store the required downstream side inputs into state so it is accessible
         # for the worker when it runs bundles that consume this stage's output.
-        # data_side_input = (
-        #     runner_execution_context.side_input_descriptors_by_stage.get(
-        #         bundle_context_manager.stage.name, {}
-        #     )
-        # )
-        # TODO(pabloem): Make sure that side inputs are being stored somewhere.
-        # runner_execution_context.commit_side_inputs_to_state(data_side_input)
+        data_side_input = runner_execution_context.side_input_descriptors_by_stage.get(
+            bundle_context_manager.stage.name, {}
+        )
+        runner_execution_context.commit_side_inputs_to_state(data_side_input)
 
         return final_result
 
@@ -329,7 +325,9 @@ class RayFnApiRunner(runner.PipelineRunner):
             },
         )
         result_generator = iter(ray.get(result_generator_ref))
-        result = beam_fn_api_pb2.InstructionResponse.FromString(ray.get(next(result_generator)))
+        result = beam_fn_api_pb2.InstructionResponse.FromString(
+            ray.get(next(result_generator))
+        )
 
         output = []
         num_outputs = ray.get(next(result_generator))

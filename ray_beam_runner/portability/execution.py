@@ -59,7 +59,11 @@ def ray_execute_bundle(
     stage_timers: Mapping[translations.TimerFamilyId, bytes],
     instruction_request_repr: Mapping[str, typing.Any],
     dry_run=False,
-) -> Generator: # (serialized InstructionResponse, # ouputs, repeat of pcoll, data, # delayed applications, repeat of pcoll, data)
+) -> Generator:
+    # generator returns:
+    # (serialized InstructionResponse, ouputs,
+    #  repeat of pcoll, data,
+    #  delayed applications, repeat of pcoll, data)
 
     instruction_request = beam_fn_api_pb2.InstructionRequest(
         instruction_id=instruction_request_repr["instruction_id"],
@@ -457,6 +461,64 @@ class RayRunnerExecutionContext(object):
                         (transform_id, id)
                     ] = timer_family_spec.timer_family_coder_id
         return timer_coder_ids
+
+    def commit_side_inputs_to_state(self, data_side_input: translations.DataSideInput):
+        """
+        Store side inputs in the state manager so that they can be accessed by workers.
+        """
+        for (consuming_transform_id, tag), (
+            buffer_id,
+            func_spec,
+        ) in data_side_input.items():
+            _, pcoll_id = translations.split_buffer_id(buffer_id)
+            value_coder = self.pipeline_context.coders[
+                self.safe_coders[self.data_channel_coders[pcoll_id]]
+            ]
+
+            elements_by_window = fn_execution.WindowGroupingBuffer(
+                func_spec, value_coder
+            )
+
+            # TODO: Fix this
+            pcoll_buffer = ray.get(self.pcollection_buffers.get(buffer_id))
+            for bundle_items in pcoll_buffer:
+                for bundle_item in bundle_items:
+                    elements_by_window.append(bundle_item)
+
+            futures = []
+            if func_spec.urn == common_urns.side_inputs.ITERABLE.urn:
+                for _, window, elements_data in elements_by_window.encoded_items():
+                    state_key = beam_fn_api_pb2.StateKey(
+                        iterable_side_input=beam_fn_api_pb2.StateKey.IterableSideInput(
+                            transform_id=consuming_transform_id,
+                            side_input_id=tag,
+                            window=window,
+                        )
+                    )
+                    futures.append(
+                        self.state_servicer.append_raw(
+                            state_key, elements_data
+                        )._object_ref
+                    )
+            elif func_spec.urn == common_urns.side_inputs.MULTIMAP.urn:
+                for key, window, elements_data in elements_by_window.encoded_items():
+                    state_key = beam_fn_api_pb2.StateKey(
+                        multimap_side_input=beam_fn_api_pb2.StateKey.MultimapSideInput(
+                            transform_id=consuming_transform_id,
+                            side_input_id=tag,
+                            window=window,
+                            key=key,
+                        )
+                    )
+                    futures.append(
+                        self.state_servicer.append_raw(
+                            state_key, elements_data
+                        )._object_ref
+                    )
+            else:
+                raise ValueError("Unknown access pattern: '%s'" % func_spec.urn)
+
+            ray.wait(futures, num_returns=len(futures))
 
     def __reduce__(self):
         # We need to implement custom serialization for this particular class

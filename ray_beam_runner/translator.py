@@ -335,7 +335,7 @@ class RayGroupByKey(RayDataTranslation):
         def key(windowed_value):
             if not isinstance(windowed_value, WindowedValue):
                 windowed_value = WindowedValue(windowed_value, 0,
-                                           (GlobalWindow(), ))
+                                               (GlobalWindow(), ))
 
             # Extract key from windowed value
             key, _ = windowed_value.value
@@ -345,7 +345,7 @@ class RayGroupByKey(RayDataTranslation):
         def value(windowed_value):
             if not isinstance(windowed_value, WindowedValue):
                 windowed_value = WindowedValue(windowed_value, 0,
-                                           (GlobalWindow(), ))
+                                               (GlobalWindow(), ))
 
             # Extract value from windowed value
             _, value = windowed_value.value

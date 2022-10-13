@@ -13,9 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-import ray
 
 from apache_beam.pipeline import PipelineVisitor
+
 
 class PipelinePrinter(PipelineVisitor):
     def visit_value(self, value, producer_node):

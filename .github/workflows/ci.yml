@@ -22,7 +22,8 @@ on:
     branches: [ master ]
 
 jobs:
-  Build:
+
+  Code-Health:
     runs-on: ubuntu-latest
 
     steps:
@@ -44,9 +45,26 @@ jobs:
       - name: Format
         run: |
           bash scripts/format.sh
-      - name: Run Portability tests
+
+  Benchmarks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Install python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.8
+      - name: Install Ray Beam Runner
         run: |
-          pytest -r A ray_beam_runner/portability/ray_runner_test.py ray_beam_runner/portability/execution_test.py
+          pip install -e .[test]
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_dev.txt
+          pip install -U "ray @ https://s3-us-west-2.amazonaws.com/ray-wheels/latest/ray-3.0.0.dev0-cp38-cp38-manylinux2014_x86_64.whl"
       - name: Run Benchmark
         run: |
           pytest benchmark/simple.py --benchmark-only --benchmark-json bm-result.json
@@ -62,6 +80,32 @@ jobs:
           alert-threshold: '200%'
           comment-on-alert: true
           fail-on-alert: true
+
+  Build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.9", "3.10"]
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Install python ${{ matrix.python-version }}
+        uses: actions/setup-python@v3
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install Ray Beam Runner
+        run: |
+          pip install -e .[test]
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_dev.txt
+          pip install -U "ray @ https://s3-us-west-2.amazonaws.com/ray-wheels/latest/ray-3.0.0.dev0-cp38-cp38-manylinux2014_x86_64.whl"
+      - name: Run Portability tests
+        run: |
+          pytest -r A ray_beam_runner/portability/ray_runner_test.py ray_beam_runner/portability/execution_test.py
 
   LicenseCheck:
     name: License Check

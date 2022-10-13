@@ -95,8 +95,7 @@ def has_urn_and_labels(mi, urn, labels):
 
 class RayFnApiRunnerTest(unittest.TestCase):
     def setUp(self) -> None:
-        if not ray.is_initialized():
-            ray.init(num_cpus=1, include_dashboard=False)
+        ray.init(num_cpus=1, include_dashboard=False, ignore_reinit_error=True)
 
     def tearDown(self) -> None:
         ray.shutdown()
@@ -160,7 +159,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
             assert_that(unnamed.even, equal_to([2]), label="unnamed.even")
             assert_that(unnamed.odd, equal_to([1, 3]), label="unnamed.odd")
 
-    @unittest.skip("Side inputs not yet supported")
     def test_pardo_side_inputs(self):
         def cross_product(elem, sides):
             for side in sides:
@@ -183,7 +181,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
                 ),
             )
 
-    @unittest.skip("Side inputs not yet supported")
     def test_pardo_side_input_dependencies(self):
         with self.create_pipeline() as p:
             inputs = [p | beam.Create([None])]
@@ -196,7 +193,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
                     )
                 )
 
-    @unittest.skip("Side inputs not yet supported")
     def test_pardo_side_input_sparse_dependencies(self):
         with self.create_pipeline() as p:
             inputs = []
@@ -204,7 +200,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
             def choose_input(s):
                 return inputs[(389 + s * 5077) % len(inputs)]
 
-            for k in range(30):
+            for k in range(20):
                 num_inputs = int((k * k % 16) ** 0.5)
                 if num_inputs == 0:
                     inputs.append(p | f"Create{k}" >> beam.Create([f"Create{k}"]))
@@ -220,7 +216,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
                         )
                     )
 
-    @unittest.skip("Side inputs not yet supported")
     def test_pardo_windowed_side_inputs(self):
         with self.create_pipeline() as p:
             # Now with some windowing.
@@ -254,7 +249,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
                 label="windowed",
             )
 
-    @unittest.skip("Side inputs not yet supported")
     def test_flattened_side_input(self, with_transcoding=True):
         with self.create_pipeline() as p:
             main = p | "main" >> beam.Create([None])
@@ -278,7 +272,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
                 label="CheckFlattenOfSideInput",
             )
 
-    @unittest.skip("Side inputs not yet supported")
     def test_gbk_side_input(self):
         with self.create_pipeline() as p:
             main = p | "main" >> beam.Create([None])
@@ -288,7 +281,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
                 equal_to([(None, {"a": [1]})]),
             )
 
-    @unittest.skip("Side inputs not yet supported")
     def test_multimap_side_input(self):
         with self.create_pipeline() as p:
             main = p | "main" >> beam.Create(["a", "b"])
@@ -301,7 +293,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
                 equal_to([("a", [1, 3]), ("b", [2])]),
             )
 
-    @unittest.skip("Side inputs not yet supported")
     def test_multimap_multiside_input(self):
         # A test where two transforms in the same stage consume the same PCollection
         # twice as side input.
@@ -325,7 +316,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
                 equal_to([("a", [1, 3], [1, 2, 3]), ("b", [2], [1, 2, 3])]),
             )
 
-    @unittest.skip("Side inputs not yet supported")
     def test_multimap_side_input_type_coercion(self):
         with self.create_pipeline() as p:
             main = p | "main" >> beam.Create(["a", "b"])
@@ -343,7 +333,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
                 equal_to([("a", [1, 3]), ("b", [2])]),
             )
 
-    @unittest.skip("Side inputs not yet supported")
     def test_pardo_unfusable_side_inputs(self):
         def cross_product(elem, sides):
             for side in sides:

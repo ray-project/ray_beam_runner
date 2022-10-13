@@ -39,6 +39,7 @@ class RayFuture(sdk_worker._Future[T]):
     def wait(self, timeout=None):
         # type: (Optional[float]) -> bool
         try:
+            # TODO: Is ray.get slower than ray.wait if we don't need the return value?
             ray.get(self._object_ref, timeout=timeout)
             #
             return True
@@ -101,7 +102,6 @@ class RayStateManager(sdk_worker.StateHandler):
         state_key,  # type: beam_fn_api_pb2.StateKey
         continuation_token=None,  # type: Optional[bytes]
     ) -> Tuple[bytes, Optional[bytes]]:
-        assert self._instruction_id is not None
         return ray.get(
             self._state_actor.get_raw.remote(
                 RayStateManager._to_key(state_key),
@@ -110,7 +110,6 @@ class RayStateManager(sdk_worker.StateHandler):
         )
 
     def append_raw(self, state_key: beam_fn_api_pb2.StateKey, data: bytes) -> RayFuture:
-        assert self._instruction_id is not None
         return RayFuture(
             self._state_actor.append_raw.remote(
                 RayStateManager._to_key(state_key), data

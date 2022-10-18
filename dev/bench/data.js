@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1665588198223,
+  "lastUpdate": 1666132859444,
   "repoUrl": "https://github.com/ray-project/ray_beam_runner",
   "entries": {
     "Python Benchmark with pytest-benchmark": [
@@ -108,6 +108,33 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 2.3557475891637778e-8",
             "extra": "mean: 103.00958393419451 nsec\nrounds: 47168"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "ray-project",
+            "username": "ray-project"
+          },
+          "committer": {
+            "name": "ray-project",
+            "username": "ray-project"
+          },
+          "id": "69c345b6672559508f201c9e7f354447f1fcd59c",
+          "message": "Install ray nightly for ci",
+          "timestamp": "2022-10-11T18:40:57Z",
+          "url": "https://github.com/ray-project/ray_beam_runner/pull/43/commits/69c345b6672559508f201c9e7f354447f1fcd59c"
+        },
+        "date": 1666132859126,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmark/simple.py::test_simple_benchmark",
+            "value": 4058835.8674763166,
+            "unit": "iter/sec",
+            "range": "stddev: 4.3970726832526886e-7",
+            "extra": "mean: 246.37606265704338 nsec\nrounds: 144928"
           }
         ]
       }

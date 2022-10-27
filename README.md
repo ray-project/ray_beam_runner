@@ -22,6 +22,8 @@ pip install -r requirements_dev.txt
 
 # Create a local installation to include test dependencies
 pip install -e .[test]
+# Or if saw error messages like "zsh: no matches found: .[test]", try:
+pip install -e '.[test]'
 ```
 
 ### Testing
@@ -32,6 +34,13 @@ functionality exist in the file `ray_beam_runner/portability/ray_runner_test.py`
 **To run the runner functionality test suite** for the Ray Beam Runner, you can run the following command:
 
 ```shell
+pytest ray_beam_runner/portability/ray_runner_test.py
+
+# If saw error messages like "TypeError: The type of keyword 'num_returns' must be (<class 'int'>, <class 'NoneType'>), but received type <class 'str'>"
+# pick the nightly release works for your platform: https://docs.ray.io/en/latest/ray-overview/installation.html#daily-releases-nightlies
+# try to install ray nightly locally, for example:
+pip install -U "ray @ https://s3-us-west-2.amazonaws.com/ray-wheels/latest/ray-3.0.0.dev0-cp39-cp39-manylinux2014_x86_64.whl"
+# and re-run:
 pytest ray_beam_runner/portability/ray_runner_test.py
 ```
 

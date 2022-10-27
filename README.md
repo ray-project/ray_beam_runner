@@ -22,6 +22,8 @@ pip install -r requirements_dev.txt
 
 # Create a local installation to include test dependencies
 pip install -e .[test]
+# Or if saw error messages like "zsh: no matches found: .[test]", try:
+pip install -e '.[test]'
 ```
 
 ### Testing

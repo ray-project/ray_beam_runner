@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1666132859444,
+  "lastUpdate": 1667405677323,
   "repoUrl": "https://github.com/ray-project/ray_beam_runner",
   "entries": {
     "Python Benchmark with pytest-benchmark": [
@@ -135,6 +135,37 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 4.3970726832526886e-7",
             "extra": "mean: 246.37606265704338 nsec\nrounds: 144928"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ilion.beyst@gmail.com",
+            "name": "iasoon",
+            "username": "iasoon"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c713097bede5704bb2b1dc5ee5f5430e028dc3c6",
+          "message": "save benchmarks on master branch only (#50)\n\nBenchmarks should only be saved on builds for the master branch (otherwise a non-accepted PR would overwrite the current stats).",
+          "timestamp": "2022-11-02T09:12:44-07:00",
+          "tree_id": "c45c7e073c7ceb2f1488f6c55d4ee96befd8f9b8",
+          "url": "https://github.com/ray-project/ray_beam_runner/commit/c713097bede5704bb2b1dc5ee5f5430e028dc3c6"
+        },
+        "date": 1667405676354,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmark/simple.py::test_simple_benchmark",
+            "value": 3285733.3772989763,
+            "unit": "iter/sec",
+            "range": "stddev: 5.812641206367983e-7",
+            "extra": "mean: 304.34605768957607 nsec\nrounds: 169492"
           }
         ]
       }

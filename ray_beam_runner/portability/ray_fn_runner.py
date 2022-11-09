@@ -121,6 +121,7 @@ def _pipeline_checks(
 class RayFnApiRunner(runner.PipelineRunner):
     def __init__(
         self,
+        is_drain=False,
     ) -> None:
 
         """Creates a new Ray Runner instance.
@@ -128,11 +129,13 @@ class RayFnApiRunner(runner.PipelineRunner):
         Args:
           progress_request_frequency: The frequency (in seconds) that the runner
               waits before requesting progress from the SDK.
+          is_drain: identify whether expand the sdf graph in the drain mode.
         """
         super().__init__()
         # TODO: figure out if this is necessary (probably, later)
         self._progress_frequency = None
         self._cache_token_generator = fn_runner.FnApiRunner.get_cache_token_generator()
+        self._is_drain = is_drain
 
     @staticmethod
     def supported_requirements():
@@ -183,7 +186,7 @@ class RayFnApiRunner(runner.PipelineRunner):
                 ]
             ),
             use_state_iterables=False,
-            is_drain=False,
+            is_drain=self._is_drain,
         )
         return self.execute_pipeline(stage_context, stages)
 

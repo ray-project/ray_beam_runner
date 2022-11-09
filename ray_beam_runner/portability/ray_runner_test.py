@@ -102,7 +102,9 @@ class RayFnApiRunnerTest(unittest.TestCase):
 
     def create_pipeline(self, is_drain=False):
         return beam.Pipeline(
-            runner=ray_beam_runner.portability.ray_fn_runner.RayFnApiRunner()
+            runner=ray_beam_runner.portability.ray_fn_runner.RayFnApiRunner(
+                is_drain=is_drain
+            )
         )
 
     def test_assert_that(self):
@@ -762,7 +764,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
     def test_draining_sdf_with_sdf_initiated_checkpointing(self):
         self.run_sdf_initiated_checkpointing(is_drain=True)
 
-    @unittest.skip("SDF not yet supported")
     def test_sdf_default_truncate_when_bounded(self):
         class SimleSDF(beam.DoFn):
             def process(
@@ -782,7 +783,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
             actual = p | beam.Create([10]) | beam.ParDo(SimleSDF())
             assert_that(actual, equal_to(range(10)))
 
-    @unittest.skip("SDF not yet supported")
     def test_sdf_default_truncate_when_unbounded(self):
         class SimleSDF(beam.DoFn):
             def process(

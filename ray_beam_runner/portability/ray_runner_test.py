@@ -1039,7 +1039,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
             )
             assert_that(res, equal_to(["1", "2"]))
 
-    @unittest.skip("SDF bundle finalization not yet supported")
     def test_register_finalizations(self):
         event_recorder = EventRecorder(tempfile.gettempdir())
 

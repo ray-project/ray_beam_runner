@@ -125,6 +125,17 @@ def ray_execute_bundle(
             output_buffers[expected_outputs[output.transform_id]].append(output.data)
 
     result: beam_fn_api_pb2.InstructionResponse = result_future.get()
+
+    if result.process_bundle.requires_finalization:
+        finalize_request = beam_fn_api_pb2.InstructionRequest(
+            finalize_bundle=beam_fn_api_pb2.FinalizeBundleRequest(
+                instruction_id=process_bundle_id
+            )
+        )
+        finalize_response = worker_handler.control_conn.push(finalize_request).get()
+        if finalize_response.error:
+            raise RuntimeError(finalize_response.error)
+
     returns = [result.SerializeToString()]
 
     returns.append(len(output_buffers))

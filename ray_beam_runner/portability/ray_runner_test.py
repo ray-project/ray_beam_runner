@@ -759,7 +759,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
     def test_sdf_with_sdf_initiated_checkpointing(self):
         self.run_sdf_initiated_checkpointing(is_drain=False)
 
-    @unittest.skip("SDF-initiated checkpointing not yet supported")
     def test_draining_sdf_with_sdf_initiated_checkpointing(self):
         self.run_sdf_initiated_checkpointing(is_drain=True)
 

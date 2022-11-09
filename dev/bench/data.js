@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1667405677323,
+  "lastUpdate": 1668013898673,
   "repoUrl": "https://github.com/ray-project/ray_beam_runner",
   "entries": {
     "Python Benchmark with pytest-benchmark": [
@@ -166,6 +166,37 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 5.812641206367983e-7",
             "extra": "mean: 304.34605768957607 nsec\nrounds: 169492"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "pabloem@users.noreply.github.com",
+            "name": "Pablo",
+            "username": "pabloem"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "33399596c095a31424f4ff14611377b7ff4e65ba",
+          "message": "Merge pull request #53 from flyingImer/master\n\nchore: removes Ray nightly from dependency in favor of 2.1 release",
+          "timestamp": "2022-11-09T09:09:40-08:00",
+          "tree_id": "81a2b6b1f228cb3752ef70fbd28902f0e9191b0a",
+          "url": "https://github.com/ray-project/ray_beam_runner/commit/33399596c095a31424f4ff14611377b7ff4e65ba"
+        },
+        "date": 1668013897209,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmark/simple.py::test_simple_benchmark",
+            "value": 2952267.9542873544,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000004965933059671291",
+            "extra": "mean: 338.7226415365773 nsec\nrounds: 71943"
           }
         ]
       }

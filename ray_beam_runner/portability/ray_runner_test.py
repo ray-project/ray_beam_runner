@@ -102,7 +102,9 @@ class RayFnApiRunnerTest(unittest.TestCase):
 
     def create_pipeline(self, is_drain=False):
         return beam.Pipeline(
-            runner=ray_beam_runner.portability.ray_fn_runner.RayFnApiRunner()
+            runner=ray_beam_runner.portability.ray_fn_runner.RayFnApiRunner(
+                is_drain=is_drain
+            )
         )
 
     def test_assert_that(self):
@@ -684,7 +686,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
             actual = p | beam.Create(data) | beam.ParDo(ExpandingStringsDoFn())
             assert_that(actual, equal_to(list("".join(data))))
 
-    @unittest.skip("SDF not yet supported")
     def test_sdf_with_dofn_as_watermark_estimator(self):
         class ExpandingStringsDoFn(beam.DoFn, beam.WatermarkEstimatorProvider):
             def initial_estimator_state(self, element, restriction):
@@ -758,11 +759,9 @@ class RayFnApiRunnerTest(unittest.TestCase):
     def test_sdf_with_sdf_initiated_checkpointing(self):
         self.run_sdf_initiated_checkpointing(is_drain=False)
 
-    @unittest.skip("SDF not yet supported")
     def test_draining_sdf_with_sdf_initiated_checkpointing(self):
         self.run_sdf_initiated_checkpointing(is_drain=True)
 
-    @unittest.skip("SDF not yet supported")
     def test_sdf_default_truncate_when_bounded(self):
         class SimleSDF(beam.DoFn):
             def process(
@@ -782,7 +781,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
             actual = p | beam.Create([10]) | beam.ParDo(SimleSDF())
             assert_that(actual, equal_to(range(10)))
 
-    @unittest.skip("SDF not yet supported")
     def test_sdf_default_truncate_when_unbounded(self):
         class SimleSDF(beam.DoFn):
             def process(
@@ -802,7 +800,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
             actual = p | beam.Create([10]) | beam.ParDo(SimleSDF())
             assert_that(actual, equal_to([]))
 
-    @unittest.skip("SDF not yet supported")
     def test_sdf_with_truncate(self):
         class SimleSDF(beam.DoFn):
             def process(
@@ -1042,7 +1039,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
             )
             assert_that(res, equal_to(["1", "2"]))
 
-    @unittest.skip("SDF not yet supported")
     def test_register_finalizations(self):
         event_recorder = EventRecorder(tempfile.gettempdir())
 
@@ -1086,7 +1082,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
 
         event_recorder.cleanup()
 
-    @unittest.skip("Combiners not yet supported")
     def test_sdf_synthetic_source(self):
         common_attrs = {
             "key_size": 1,
@@ -1188,7 +1183,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
                     any(re.match(packed_step_name_regex, s) for s in step_names)
                 )
 
-    @unittest.skip("Combiners not yet supported")
+    @unittest.skip("Metrics not yet supported")
     def test_pack_combiners(self):
         self._test_pack_combiners(assert_using_counter_names=True)
 

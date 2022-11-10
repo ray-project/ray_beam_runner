@@ -125,6 +125,17 @@ def ray_execute_bundle(
             output_buffers[expected_outputs[output.transform_id]].append(output.data)
 
     result: beam_fn_api_pb2.InstructionResponse = result_future.get()
+
+    if result.process_bundle.requires_finalization:
+        finalize_request = beam_fn_api_pb2.InstructionRequest(
+            finalize_bundle=beam_fn_api_pb2.FinalizeBundleRequest(
+                instruction_id=process_bundle_id
+            )
+        )
+        finalize_response = worker_handler.control_conn.push(finalize_request).get()
+        if finalize_response.error:
+            raise RuntimeError(finalize_response.error)
+
     returns = [result.SerializeToString()]
 
     returns.append(len(output_buffers))
@@ -155,6 +166,46 @@ def ray_execute_bundle(
         yield ret
 
 
+def _get_source_transform_name(
+    process_bundle_descriptor: beam_fn_api_pb2.ProcessBundleDescriptor,
+    transform_id: str,
+    input_id: str,
+) -> str:
+    """Find the name of the source PTransform that feeds into the given
+    (transform_id, input_id)."""
+    input_pcoll = process_bundle_descriptor.transforms[transform_id].inputs[input_id]
+    for ptransform_id, ptransform in process_bundle_descriptor.transforms.items():
+        # The GrpcRead is directly followed by the SDF/Process.
+        if (
+            ptransform.spec.urn == bundle_processor.DATA_INPUT_URN
+            and input_pcoll in ptransform.outputs.values()
+        ):
+            return ptransform_id
+
+        # The GrpcRead is followed by SDF/Truncate -> SDF/Process.
+        # We need to traverse the TRUNCATE_SIZED_RESTRICTION node in order
+        # to find the original source PTransform.
+        if (
+            ptransform.spec.urn
+            == common_urns.sdf_components.TRUNCATE_SIZED_RESTRICTION.urn
+            and input_pcoll in ptransform.outputs.values()
+        ):
+            input_pcoll_ = translations.only_element(
+                process_bundle_descriptor.transforms[ptransform_id].inputs.values()
+            )
+            for (
+                ptransform_id_2,
+                ptransform_2,
+            ) in process_bundle_descriptor.transforms.items():
+                if (
+                    ptransform_2.spec.urn == bundle_processor.DATA_INPUT_URN
+                    and input_pcoll_ in ptransform_2.outputs.values()
+                ):
+                    return ptransform_id_2
+
+    raise RuntimeError("No IO transform feeds %s" % transform_id)
+
+
 def _retrieve_delayed_applications(
     bundle_result: beam_fn_api_pb2.InstructionResponse,
     process_bundle_descriptor: beam_fn_api_pb2.ProcessBundleDescriptor,
@@ -170,22 +221,15 @@ def _retrieve_delayed_applications(
     for delayed_application in bundle_result.process_bundle.residual_roots:
         # TODO(pabloem): Time delay needed for streaming. For now we'll ignore it.
         # time_delay = delayed_application.requested_time_delay
-        transform = process_bundle_descriptor.transforms[
-            delayed_application.application.transform_id
-        ]
-        pcoll_name = transform.inputs[delayed_application.application.input_id]
-
-        consumer_transform = translations.only_element(
-            [
-                read_id
-                for read_id, proto in process_bundle_descriptor.transforms.items()
-                if proto.spec.urn == bundle_processor.DATA_INPUT_URN
-                and pcoll_name in proto.outputs.values()
-            ]
+        source_transform = _get_source_transform_name(
+            process_bundle_descriptor,
+            delayed_application.application.transform_id,
+            delayed_application.application.input_id,
         )
-        if consumer_transform not in delayed_bundles:
-            delayed_bundles[consumer_transform] = []
-        delayed_bundles[consumer_transform].append(
+
+        if source_transform not in delayed_bundles:
+            delayed_bundles[source_transform] = []
+        delayed_bundles[source_transform].append(
             delayed_application.application.element
         )
 

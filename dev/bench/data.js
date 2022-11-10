@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1668013898673,
+  "lastUpdate": 1668112283033,
   "repoUrl": "https://github.com/ray-project/ray_beam_runner",
   "entries": {
     "Python Benchmark with pytest-benchmark": [
@@ -197,6 +197,37 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000004965933059671291",
             "extra": "mean: 338.7226415365773 nsec\nrounds: 71943"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ilion.beyst@gmail.com",
+            "name": "iasoon",
+            "username": "iasoon"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5dd1eb4e6c877882a2ebc0644d0ba1b0a96a512e",
+          "message": "Complete user-initiated SDF functionality (#52)\n\n* correctly set is_drain parameter\r\n\r\n* enable passing runner tests\r\n\r\n* Support deferred applications in drain mode\r\n\r\n* implement bundle finalization",
+          "timestamp": "2022-11-10T15:29:56-05:00",
+          "tree_id": "60e819824ef7ec0060967a431e8da3c5dbd34555",
+          "url": "https://github.com/ray-project/ray_beam_runner/commit/5dd1eb4e6c877882a2ebc0644d0ba1b0a96a512e"
+        },
+        "date": 1668112282441,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmark/simple.py::test_simple_benchmark",
+            "value": 11973081.110939538,
+            "unit": "iter/sec",
+            "range": "stddev: 3.504231204294896e-8",
+            "extra": "mean: 83.52069034980218 nsec\nrounds: 56819"
           }
         ]
       }

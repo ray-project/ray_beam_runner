@@ -400,20 +400,9 @@ class PcollectionBufferManager:
 
 @ray.remote
 class RayWatermarkManager(watermark_manager.WatermarkManager):
-    def __init__(self):
-        # the original WatermarkManager performs a lot of computation
-        # in its __init__ method. Because Ray calls __init__ whenever
-        # it deserializes an object, we'll move its setup elsewhere.
-        self._initialized = False
-        self._pcollections_by_name = {}
-        self._stages_by_name = {}
-
-    def setup(self, stages):
-        if self._initialized:
-            return
-        logging.debug("initialized the RayWatermarkManager")
-        self._initialized = True
-        watermark_manager.WatermarkManager.setup(self, stages)
+    def set_pcoll_produced_watermark(self, name, watermark):
+        element = self._pcollections_by_name[name]
+        element.set_produced_watermark(watermark)
 
 
 class RayRunnerExecutionContext(object):
@@ -426,6 +415,7 @@ class RayRunnerExecutionContext(object):
         state_servicer: Optional[RayStateManager] = None,
         worker_manager: Optional[RayWorkerHandlerManager] = None,
         pcollection_buffers: PcollectionBufferManager = None,
+        watermark_manager: Optional[RayWatermarkManager] = None,
     ) -> None:
         ray.util.register_serializer(
             beam_runner_api_pb2.Components,
@@ -458,7 +448,9 @@ class RayRunnerExecutionContext(object):
             for t in s.transforms
             if t.spec.urn == bundle_processor.DATA_INPUT_URN
         }
-        self._watermark_manager = RayWatermarkManager.remote()
+        self.watermark_manager = watermark_manager or RayWatermarkManager.remote(
+            self.stages
+        )
         self.pipeline_context = pipeline_context.PipelineContext(pipeline_components)
         self.safe_windowing_strategies = {
             # TODO: Enable safe_windowing_strategy after
@@ -472,14 +464,6 @@ class RayRunnerExecutionContext(object):
         self.worker_manager = worker_manager or RayWorkerHandlerManager()
         self.timer_coder_ids = self._build_timer_coders_id_map()
         self.encoded_impulse_ref = ray.put([fn_execution.ENCODED_IMPULSE_VALUE])
-
-    @property
-    def watermark_manager(self):
-        # We don't need to wait for this line to execute with ray.get,
-        # because any further calls to the watermark manager actor will
-        # have to wait for it.
-        self._watermark_manager.setup.remote(self.stages)
-        return self._watermark_manager
 
     @staticmethod
     def next_uid():
@@ -577,6 +561,7 @@ class RayRunnerExecutionContext(object):
             self.state_servicer,
             self.worker_manager,
             self.pcollection_buffers,
+            self.watermark_manager,
         )
 
         def deserializer(*args):
@@ -588,6 +573,7 @@ class RayRunnerExecutionContext(object):
                 args[4],
                 args[5],
                 args[6],
+                args[7],
             )
 
         return (deserializer, data)

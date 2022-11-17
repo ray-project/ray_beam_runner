@@ -44,6 +44,13 @@ from apache_beam.runners.portability.fn_api_runner import translations
 from apache_beam.runners.portability.fn_api_runner.execution import ListBuffer
 from apache_beam.transforms import environments
 from apache_beam.utils import proto_utils, timestamp
+from apache_beam.metrics import metric
+from apache_beam.metrics import monitoring_infos
+from apache_beam.metrics.execution import MetricResult
+from apache_beam.metrics.execution import MetricsContainer
+from apache_beam.metrics.metricbase import MetricName
+from apache_beam.metrics.monitoring_infos import consolidate as consolidate_monitoring_infos
+from apache_beam.runners.portability import portable_metrics
 
 import ray
 from ray_beam_runner.portability.context_management import RayBundleContextManager
@@ -208,13 +215,20 @@ class RayFnApiRunner(runner.PipelineRunner):
         # Using this queue to hold 'bundles' that are ready to be processed
         queue = collections.deque()
 
+
+        # stage metrics
+        monitoring_infos_by_stage: MutableMapping[
+            str, Iterable['metrics_pb2.MonitoringInfo']] = {}
+
         try:
             for stage in stages:
                 bundle_ctx = RayBundleContextManager(runner_execution_context, stage)
-                self._run_stage(runner_execution_context, bundle_ctx, queue)
+                result = self._run_stage(runner_execution_context, bundle_ctx, queue)
+                monitoring_infos_by_stage[bundle_ctx.stage.name] = result.process_bundle.monitoring_infos
+
         finally:
             pass
-        return RayRunnerResult(runner.PipelineState.DONE)
+        return RayRunnerResult(runner.PipelineState.DONE, monitoring_infos_by_stage)
 
     def _run_stage(
         self,
@@ -444,19 +458,72 @@ class RayFnApiRunner(runner.PipelineRunner):
         return timer_watermark_data, newly_set_timers
 
 
+
+class FnApiMetrics(metric.MetricResults):
+  def __init__(self, step_monitoring_infos, user_metrics_only=True):
+    """Used for querying metrics from the PipelineResult object.
+      step_monitoring_infos: Per step metrics specified as MonitoringInfos.
+      user_metrics_only: If true, includes user metrics only.
+    """
+    self._counters = {}
+    self._distributions = {}
+    self._gauges = {}
+    self._user_metrics_only = user_metrics_only
+    self._monitoring_infos = step_monitoring_infos
+
+    for smi in step_monitoring_infos.values():
+      counters, distributions, gauges = \
+          portable_metrics.from_monitoring_infos(smi, user_metrics_only)
+      self._counters.update(counters)
+      self._distributions.update(distributions)
+      self._gauges.update(gauges)
+
+  def query(self, filter=None):
+    counters = [
+        MetricResult(k, v, v) for k,
+        v in self._counters.items() if self.matches(filter, k)
+    ]
+    distributions = [
+        MetricResult(k, v, v) for k,
+        v in self._distributions.items() if self.matches(filter, k)
+    ]
+    gauges = [
+        MetricResult(k, v, v) for k,
+        v in self._gauges.items() if self.matches(filter, k)
+    ]
+
+    return {
+        self.COUNTERS: counters,
+        self.DISTRIBUTIONS: distributions,
+        self.GAUGES: gauges
+    }
+
+  def monitoring_infos(self):
+    # type: () -> List[metrics_pb2.MonitoringInfo]
+    return [
+        item for sublist in self._monitoring_infos.values() for item in sublist
+    ]
+
 class RayRunnerResult(runner.PipelineResult):
-    def __init__(self, state):
+    def __init__(self, state, monitoring_infos_by_stage):
         super().__init__(state)
+        self._monitoring_infos_by_stage = monitoring_infos_by_stage
+        self._metrics = None
+        self._monitoring_metrics = None
 
     def wait_until_finish(self, duration=None):
         return None
 
     def metrics(self):
         """Returns a queryable object including user metrics only."""
-        # TODO(pabloem): Implement this based on _RayMetricsActor
-        raise NotImplementedError()
+        if self._metrics is None:
+          self._metrics = FnApiMetrics(
+              self._monitoring_infos_by_stage, user_metrics_only=True)
+        return self._metrics
 
     def monitoring_metrics(self):
         """Returns a queryable object including all metrics."""
-        # TODO(pabloem): Implement this based on _RayMetricsActor
-        raise NotImplementedError()
+        if self._monitoring_metrics is None:
+          self._monitoring_metrics = FnApiMetrics(
+              self._monitoring_infos_by_stage, user_metrics_only=False)
+        return self._monitoring_metrics

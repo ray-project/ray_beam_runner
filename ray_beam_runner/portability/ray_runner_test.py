@@ -65,7 +65,6 @@ from apache_beam.utils import timestamp
 import ray_beam_runner.portability.ray_fn_runner
 import ray
 
-
 if statesampler.FAST_SAMPLER:
     DEFAULT_SAMPLING_PERIOD_MS = statesampler.DEFAULT_SAMPLING_PERIOD_MS
 else:
@@ -1194,7 +1193,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
 # it makes the probability of sampling far too small
 # upon repeating bundle processing due to unncessarily incrementing
 # the sampling counter.
-@unittest.skip("Metrics not yet supported.")
+#@unittest.skip("Metrics not yet supported.")
 class RayRunnerMetricsTest(unittest.TestCase):
     def setUp(self) -> None:
         if not ray.is_initialized():
@@ -1285,6 +1284,7 @@ class RayRunnerMetricsTest(unittest.TestCase):
             runner=ray_beam_runner.portability.ray_fn_runner.RayFnApiRunner()
         )
 
+    #@unittest.skip("Metrics not yet supported")
     def test_element_count_metrics(self):
         class GenerateTwoOutputs(beam.DoFn):
             def process(self, element):
@@ -1300,7 +1300,7 @@ class RayRunnerMetricsTest(unittest.TestCase):
         p = self.create_pipeline()
 
         # Produce enough elements to make sure byte sampling occurs.
-        num_source_elems = 100
+        num_source_elems = 1000
         pcoll = p | beam.Create(
             ["a%d" % i for i in range(num_source_elems)], reshuffle=False
         )
@@ -1477,6 +1477,7 @@ class RayRunnerMetricsTest(unittest.TestCase):
         except Exception:
             raise
 
+    #@unittest.skip("Metrics not yet supported")
     def test_non_user_metrics(self):
         p = self.create_pipeline()
 
@@ -1520,6 +1521,7 @@ class RayRunnerMetricsTest(unittest.TestCase):
     # this test is flaky when state duration is low.
     # Since increasing state duration significantly would also slow down
     # the test suite, we are retrying twice on failure as a mitigation.
+    @unittest.skip("Metrics not yet supported")
     def test_progress_metrics(self):
         p = self.create_pipeline()
 

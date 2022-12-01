@@ -28,6 +28,8 @@ from typing import Mapping
 from typing import Optional
 from typing import Tuple
 from typing import Union
+from typing import MutableMapping
+from typing import Iterable
 
 from apache_beam.coders.coder_impl import create_OutputStream
 from apache_beam.options import pipeline_options
@@ -45,12 +47,9 @@ from apache_beam.runners.portability.fn_api_runner.execution import ListBuffer
 from apache_beam.transforms import environments
 from apache_beam.utils import proto_utils, timestamp
 from apache_beam.metrics import metric
-from apache_beam.metrics import monitoring_infos
 from apache_beam.metrics.execution import MetricResult
-from apache_beam.metrics.execution import MetricsContainer
-from apache_beam.metrics.metricbase import MetricName
-from apache_beam.metrics.monitoring_infos import consolidate as consolidate_monitoring_infos
 from apache_beam.runners.portability import portable_metrics
+from apache_beam.portability.api import metrics_pb2
 
 import ray
 from ray_beam_runner.portability.context_management import RayBundleContextManager

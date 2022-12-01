@@ -38,7 +38,6 @@
 #     - strings
 
 import argparse
-import re
 import apache_beam as beam
 from apache_beam.io import ReadFromText
 from apache_beam.io import WriteToText
@@ -71,6 +70,7 @@ class WordExtractingDoFn(beam.DoFn):
     Returns:
       The processed element.
     """
+    import re
     text_line = element.strip()
     if not text_line:
       self.empty_line_counter.inc(1)

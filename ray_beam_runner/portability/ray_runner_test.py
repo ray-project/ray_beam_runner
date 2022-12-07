@@ -747,13 +747,13 @@ class RayFnApiRunnerTest(unittest.TestCase):
             assert_that(actual, equal_to(list("".join(data))))
 
         if isinstance(p.runner, FnApiRunner):
-          res = p.runner._latest_run_result
-          counters = res.metrics().query(
-              beam.metrics.MetricsFilter().with_name('my_counter'))['counters']
-          self.assertEqual(1, len(counters))
-          self.assertEqual(counters[0].committed, len(''.join(data)))
-        return 
-
+            res = p.runner._latest_run_result
+            counters = res.metrics().query(
+                beam.metrics.MetricsFilter().with_name("my_counter")
+            )["counters"]
+            self.assertEqual(1, len(counters))
+            self.assertEqual(counters[0].committed, len("".join(data)))
+        return
 
     def test_sdf_with_sdf_initiated_checkpointing(self):
         self.run_sdf_initiated_checkpointing(is_drain=False)
@@ -1191,7 +1191,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
 # it makes the probability of sampling far too small
 # upon repeating bundle processing due to unncessarily incrementing
 # the sampling counter.
-#@unittest.skip("Metrics not yet supported.")
+# @unittest.skip("Metrics not yet supported.")
 class RayRunnerMetricsTest(unittest.TestCase):
     def setUp(self) -> None:
         if not ray.is_initialized():

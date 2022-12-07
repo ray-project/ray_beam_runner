@@ -214,16 +214,18 @@ class RayFnApiRunner(runner.PipelineRunner):
         # Using this queue to hold 'bundles' that are ready to be processed
         queue = collections.deque()
 
-
         # stage metrics
         monitoring_infos_by_stage: MutableMapping[
-            str, Iterable['metrics_pb2.MonitoringInfo']] = {}
+            str, Iterable["metrics_pb2.MonitoringInfo"]
+        ] = {}
 
         try:
             for stage in stages:
                 bundle_ctx = RayBundleContextManager(runner_execution_context, stage)
                 result = self._run_stage(runner_execution_context, bundle_ctx, queue)
-                monitoring_infos_by_stage[bundle_ctx.stage.name] = result.process_bundle.monitoring_infos
+                monitoring_infos_by_stage[
+                    bundle_ctx.stage.name
+                ] = result.process_bundle.monitoring_infos
 
         finally:
             pass
@@ -457,51 +459,53 @@ class RayFnApiRunner(runner.PipelineRunner):
         return timer_watermark_data, newly_set_timers
 
 
-
 class FnApiMetrics(metric.MetricResults):
-  def __init__(self, step_monitoring_infos, user_metrics_only=True):
-    """Used for querying metrics from the PipelineResult object.
-      step_monitoring_infos: Per step metrics specified as MonitoringInfos.
-      user_metrics_only: If true, includes user metrics only.
-    """
-    self._counters = {}
-    self._distributions = {}
-    self._gauges = {}
-    self._user_metrics_only = user_metrics_only
-    self._monitoring_infos = step_monitoring_infos
+    def __init__(self, step_monitoring_infos, user_metrics_only=True):
+        """Used for querying metrics from the PipelineResult object.
+        step_monitoring_infos: Per step metrics specified as MonitoringInfos.
+        user_metrics_only: If true, includes user metrics only.
+        """
+        self._counters = {}
+        self._distributions = {}
+        self._gauges = {}
+        self._user_metrics_only = user_metrics_only
+        self._monitoring_infos = step_monitoring_infos
 
-    for smi in step_monitoring_infos.values():
-      counters, distributions, gauges = \
-          portable_metrics.from_monitoring_infos(smi, user_metrics_only)
-      self._counters.update(counters)
-      self._distributions.update(distributions)
-      self._gauges.update(gauges)
+        for smi in step_monitoring_infos.values():
+            counters, distributions, gauges = portable_metrics.from_monitoring_infos(
+                smi, user_metrics_only
+            )
+            self._counters.update(counters)
+            self._distributions.update(distributions)
+            self._gauges.update(gauges)
 
-  def query(self, filter=None):
-    counters = [
-        MetricResult(k, v, v) for k,
-        v in self._counters.items() if self.matches(filter, k)
-    ]
-    distributions = [
-        MetricResult(k, v, v) for k,
-        v in self._distributions.items() if self.matches(filter, k)
-    ]
-    gauges = [
-        MetricResult(k, v, v) for k,
-        v in self._gauges.items() if self.matches(filter, k)
-    ]
+    def query(self, filter=None):
+        counters = [
+            MetricResult(k, v, v)
+            for k, v in self._counters.items()
+            if self.matches(filter, k)
+        ]
+        distributions = [
+            MetricResult(k, v, v)
+            for k, v in self._distributions.items()
+            if self.matches(filter, k)
+        ]
+        gauges = [
+            MetricResult(k, v, v)
+            for k, v in self._gauges.items()
+            if self.matches(filter, k)
+        ]
 
-    return {
-        self.COUNTERS: counters,
-        self.DISTRIBUTIONS: distributions,
-        self.GAUGES: gauges
-    }
+        return {
+            self.COUNTERS: counters,
+            self.DISTRIBUTIONS: distributions,
+            self.GAUGES: gauges,
+        }
 
-  def monitoring_infos(self):
-    # type: () -> List[metrics_pb2.MonitoringInfo]
-    return [
-        item for sublist in self._monitoring_infos.values() for item in sublist
-    ]
+    def monitoring_infos(self):
+        # type: () -> List[metrics_pb2.MonitoringInfo]
+        return [item for sublist in self._monitoring_infos.values() for item in sublist]
+
 
 class RayRunnerResult(runner.PipelineResult):
     def __init__(self, state, monitoring_infos_by_stage):
@@ -516,13 +520,15 @@ class RayRunnerResult(runner.PipelineResult):
     def metrics(self):
         """Returns a queryable object including user metrics only."""
         if self._metrics is None:
-          self._metrics = FnApiMetrics(
-              self._monitoring_infos_by_stage, user_metrics_only=True)
+            self._metrics = FnApiMetrics(
+                self._monitoring_infos_by_stage, user_metrics_only=True
+            )
         return self._metrics
 
     def monitoring_metrics(self):
         """Returns a queryable object including all metrics."""
         if self._monitoring_metrics is None:
-          self._monitoring_metrics = FnApiMetrics(
-              self._monitoring_infos_by_stage, user_metrics_only=False)
+            self._monitoring_metrics = FnApiMetrics(
+                self._monitoring_infos_by_stage, user_metrics_only=False
+            )
         return self._monitoring_metrics

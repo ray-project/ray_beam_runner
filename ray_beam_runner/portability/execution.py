@@ -46,8 +46,13 @@ from apache_beam.runners.portability.fn_api_runner import worker_handlers
 from apache_beam.runners.worker import bundle_processor
 
 from ray_beam_runner.portability.state import RayStateManager
+from ray_beam_runner.portability.translations import StageTags
 
 _LOGGER = logging.getLogger(__name__)
+
+
+# TODO(pabloem): Stop hardcoding the number of blocks per task
+BLOCKS_PER_TASK = 10
 
 
 @ray.remote(num_returns="dynamic")
@@ -59,11 +64,22 @@ def ray_execute_bundle(
     stage_timers: Mapping[translations.TimerFamilyId, bytes],
     instruction_request_repr: Mapping[str, typing.Any],
     dry_run=False,
+    stage_tags=None,
 ) -> Generator:
-    # generator returns:
-    # (serialized InstructionResponse, ouputs,
-    #  repeat of pcoll, data,
-    #  delayed applications, repeat of pcoll, data)
+    """Execute a Beam bundle as a ray task.
+
+    :returns A `Generator` with the following values:
+            - serialized InstructionResponse,
+            - dictionary of timers
+            - dictionary of delayed applications
+            - count of output pcollections,
+            - repeat of
+                - pcoll name
+                - pcoll block count
+                - repeat of pcoll block
+    """
+
+    stage_tags = stage_tags or set()
 
     instruction_request = beam_fn_api_pb2.InstructionRequest(
         instruction_id=instruction_request_repr["instruction_id"],
@@ -75,8 +91,14 @@ def ray_execute_bundle(
         ),
     )
     output_buffers: Mapping[
-        typing.Union[str, translations.TimerFamilyId], list
-    ] = collections.defaultdict(list)
+        str, typing.Union[KeyBlockBasedDataBuffer, RandomBlockBasedDataBuffer]
+    ] = collections.defaultdict(
+        KeyBlockBasedDataBuffer if StageTags.GROUPING_SHUFFLE in stage_tags else RandomBlockBasedDataBuffer
+    )
+
+    output_timer_buffers: Mapping[
+        translations.TimerFamilyId, list] = collections.defaultdict(list)
+
     process_bundle_id = instruction_request.instruction_id
 
     worker_handler = _get_worker_handler(
@@ -95,6 +117,7 @@ def ray_execute_bundle(
         for k, objrefs in input_bundle.input_data.items()
     }
 
+    print("pabloem - input data " + str(input_data) + str(list(list(input_data.items())[0][1])))
     for transform_id, elements in input_data.items():
         data_out = worker_handler.data_conn.output_stream(
             process_bundle_id, transform_id
@@ -103,22 +126,17 @@ def ray_execute_bundle(
             data_out.write(byte_stream)
         data_out.close()
 
-    expect_reads: List[typing.Union[str, translations.TimerFamilyId]] = list(
-        expected_outputs.keys()
-    )
-    expect_reads.extend(list(stage_timers.keys()))
-
     result_future = worker_handler.control_conn.push(instruction_request)
 
     for output in worker_handler.data_conn.input_elements(
         process_bundle_id,
-        expect_reads,
+        list(stage_timers.keys()) + list(expected_outputs.keys()),
         abort_callback=lambda: (
             result_future.is_done() and bool(result_future.get().error)
         ),
     ):
         if isinstance(output, beam_fn_api_pb2.Elements.Timers) and not dry_run:
-            output_buffers[
+            output_timer_buffers[
                 stage_timers[(output.transform_id, output.timer_family_id)]
             ].append(output.timers)
         if isinstance(output, beam_fn_api_pb2.Elements.Data) and not dry_run:
@@ -138,10 +156,8 @@ def ray_execute_bundle(
 
     returns = [result.SerializeToString()]
 
-    returns.append(len(output_buffers))
-    for pcoll, buffer in output_buffers.items():
-        returns.append(pcoll)
-        returns.append(buffer)
+    # We pass output timers as a single full object, as these are smaller data
+    returns.append(output_timer_buffers)
 
     # Now we collect all the deferred inputs remaining from bundle execution.
     # Deferred inputs can be:
@@ -157,14 +173,39 @@ def ray_execute_bundle(
         runner_context,
     )
 
-    returns.append(len(delayed_applications))
-    for pcoll, buffer in delayed_applications.items():
+    # We pass delayed applications as a single full object, as these are smaller data
+    returns.append(delayed_applications)
+
+    returns.append(len(output_buffers))
+    for pcoll, buffer in output_buffers.items():
         returns.append(pcoll)
-        returns.append(buffer)
+        returns.append(len(buffer.blocks))
+        for block in buffer.blocks:
+            returns.append(block)
 
     for ret in returns:
         yield ret
 
+
+class RandomBlockBasedDataBuffer:
+    def __init__(self):
+        self.num_blocks = BLOCKS_PER_TASK
+        self.blocks = [[] for _ in range(self.num_blocks)]
+        self._total_data = 0
+
+    def append(self, data):
+        self.blocks[self._total_data % len(self.blocks)].append(data)
+        self._total_data +=1
+
+
+class KeyBlockBasedDataBuffer:
+    def __init__(self):
+        self.num_blocks = 1
+        self.blocks = [[] for _ in range(self.num_blocks)]
+
+    def append(self, data):
+        # TODO: Figure out how to get the Key for the data.
+        self.blocks[0].append(data)
 
 def _get_source_transform_name(
     process_bundle_descriptor: beam_fn_api_pb2.ProcessBundleDescriptor,

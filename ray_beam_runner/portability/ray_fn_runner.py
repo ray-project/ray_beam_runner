@@ -53,6 +53,7 @@ from ray_beam_runner.portability.execution import (
     merge_stage_results,
 )
 from ray_beam_runner.portability.execution import RayRunnerExecutionContext
+from ray_beam_runner.serialization import register_protobuf_serializers
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -198,6 +199,7 @@ class RayFnApiRunner(runner.PipelineRunner):
         """Execute pipeline represented by a list of stages and a context."""
         logging.info("Starting pipeline of %d stages." % len(stages))
 
+        register_protobuf_serializers()
         runner_execution_context = RayRunnerExecutionContext(
             stages,
             stage_context.components,
@@ -328,9 +330,7 @@ class RayFnApiRunner(runner.PipelineRunner):
             },
         )
         result_generator = iter(ray.get(result_generator_ref))
-        result = beam_fn_api_pb2.InstructionResponse.FromString(
-            ray.get(next(result_generator))
-        )
+        result = ray.get(next(result_generator))
 
         output = []
         num_outputs = ray.get(next(result_generator))

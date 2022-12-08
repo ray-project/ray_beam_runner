@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1668112283033,
+  "lastUpdate": 1670528882559,
   "repoUrl": "https://github.com/ray-project/ray_beam_runner",
   "entries": {
     "Python Benchmark with pytest-benchmark": [
@@ -228,6 +228,37 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 3.504231204294896e-8",
             "extra": "mean: 83.52069034980218 nsec\nrounds: 56819"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "valiantljk@gmail.com",
+            "name": "jialin",
+            "username": "valiantljk"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "956e7cfd93e751ffa4b9661a28fca47f19dfdf05",
+          "message": "Support metrics aggregation in Ray runner (#56)\n\n* support non-user and element-wise metrics\r\n\r\n* unlocked all metrics related tests except progress metrics\r\n\r\n* word count example with metrics\r\n\r\n* fix module import\r\n\r\n* import module inside ray task\r\n\r\n* remove example\r\n\r\n* add word count metrics example and re-formatted code locally\r\n\r\nCo-authored-by: Jialin Liu <rootliu@amazon.com>",
+          "timestamp": "2022-12-08T14:46:24-05:00",
+          "tree_id": "09fbad05a8120716fbfa60b5d9cea533e9e3cdcd",
+          "url": "https://github.com/ray-project/ray_beam_runner/commit/956e7cfd93e751ffa4b9661a28fca47f19dfdf05"
+        },
+        "date": 1670528881981,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmark/simple.py::test_simple_benchmark",
+            "value": 11395954.650823226,
+            "unit": "iter/sec",
+            "range": "stddev: 9.509123129109762e-9",
+            "extra": "mean: 87.75043694370578 nsec\nrounds: 52913"
           }
         ]
       }

@@ -50,7 +50,7 @@ from apache_beam.options.pipeline_options import PipelineOptions
 from apache_beam.options.pipeline_options import StandardOptions
 from apache_beam.options.value_provider import RuntimeValueProvider
 from apache_beam.portability import python_urns
-from apache_beam.runners.portability.fn_api_runner import fn_runner
+from apache_beam.runners.portability.fn_api_runner import fn_runner, FnApiRunner
 from apache_beam.runners.sdf_utils import RestrictionTrackerView
 from apache_beam.runners.worker import data_plane
 from apache_beam.runners.worker import statesampler
@@ -64,7 +64,6 @@ from apache_beam.utils import timestamp
 
 import ray_beam_runner.portability.ray_fn_runner
 import ray
-
 
 if statesampler.FAST_SAMPLER:
     DEFAULT_SAMPLING_PERIOD_MS = statesampler.DEFAULT_SAMPLING_PERIOD_MS
@@ -747,14 +746,14 @@ class RayFnApiRunnerTest(unittest.TestCase):
 
             assert_that(actual, equal_to(list("".join(data))))
 
-        return  # Metrics not yet supported!
-        # TODO: Enable following code section
-        # if isinstance(p.runner, fn_api_runner.FnApiRunner):
-        #   res = p.runner._latest_run_result
-        #   counters = res.metrics().query(
-        #       beam.metrics.MetricsFilter().with_name('my_counter'))['counters']
-        #   self.assertEqual(1, len(counters))
-        #   self.assertEqual(counters[0].committed, len(''.join(data)))
+        if isinstance(p.runner, FnApiRunner):
+            res = p.runner._latest_run_result
+            counters = res.metrics().query(
+                beam.metrics.MetricsFilter().with_name("my_counter")
+            )["counters"]
+            self.assertEqual(1, len(counters))
+            self.assertEqual(counters[0].committed, len("".join(data)))
+        return
 
     def test_sdf_with_sdf_initiated_checkpointing(self):
         self.run_sdf_initiated_checkpointing(is_drain=False)
@@ -983,7 +982,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
             pcoll_b = p | "b" >> beam.Create(["b"])
             assert_that((pcoll_a, pcoll_b) | First(), equal_to(["a"]))
 
-    @unittest.skip("Metrics not yet supported")
     def test_metrics(self, check_gauge=True):
         p = self.create_pipeline()
 
@@ -1183,7 +1181,6 @@ class RayFnApiRunnerTest(unittest.TestCase):
                     any(re.match(packed_step_name_regex, s) for s in step_names)
                 )
 
-    @unittest.skip("Metrics not yet supported")
     def test_pack_combiners(self):
         self._test_pack_combiners(assert_using_counter_names=True)
 
@@ -1194,7 +1191,7 @@ class RayFnApiRunnerTest(unittest.TestCase):
 # it makes the probability of sampling far too small
 # upon repeating bundle processing due to unncessarily incrementing
 # the sampling counter.
-@unittest.skip("Metrics not yet supported.")
+# @unittest.skip("Metrics not yet supported.")
 class RayRunnerMetricsTest(unittest.TestCase):
     def setUp(self) -> None:
         if not ray.is_initialized():
@@ -1520,6 +1517,7 @@ class RayRunnerMetricsTest(unittest.TestCase):
     # this test is flaky when state duration is low.
     # Since increasing state duration significantly would also slow down
     # the test suite, we are retrying twice on failure as a mitigation.
+    @unittest.skip("Metrics not yet supported")
     def test_progress_metrics(self):
         p = self.create_pipeline()
 

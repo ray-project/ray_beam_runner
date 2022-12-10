@@ -54,6 +54,7 @@ from apache_beam.portability.api import metrics_pb2
 import ray
 from ray_beam_runner.portability.context_management import RayBundleContextManager
 from ray_beam_runner.portability.execution import Bundle, _get_input_id
+from ray_beam_runner.portability import translations as ray_translations
 from ray_beam_runner.portability.execution import (
     ray_execute_bundle,
     merge_stage_results,
@@ -176,7 +177,8 @@ class RayFnApiRunner(runner.PipelineRunner):
                 translations.pack_combiners,
                 translations.lift_combiners,
                 translations.expand_sdf,
-                translations.expand_gbk,
+                ray_translations.expand_gbk,
+                ray_translations.expand_reshuffle,
                 translations.sink_flattens,
                 translations.greedily_fuse,
                 translations.read_to_impulse,
@@ -189,6 +191,7 @@ class RayFnApiRunner(runner.PipelineRunner):
                 [
                     common_urns.primitives.FLATTEN.urn,
                     common_urns.primitives.GROUP_BY_KEY.urn,
+                    common_urns.composites.RESHUFFLE.urn,
                 ]
             ),
             use_state_iterables=False,
@@ -330,57 +333,86 @@ class RayFnApiRunner(runner.PipelineRunner):
         process_bundle_id = "bundle_%s" % process_bundle_descriptor.id
 
         pbd_id = process_bundle_descriptor.id
-        result_generator_ref = ray_execute_bundle.remote(
-            runner_execution_context,
-            input_bundle,
-            transform_to_buffer_coder,
-            data_output,
-            stage_timers,
-            instruction_request_repr={
-                "instruction_id": process_bundle_id,
-                "process_descriptor_id": pbd_id,
-                "cache_token": next(cache_token_generator),
-            },
-        )
-        result_generator = iter(ray.get(result_generator_ref))
-        result = beam_fn_api_pb2.InstructionResponse.FromString(
-            ray.get(next(result_generator))
-        )
 
-        output = []
-        num_outputs = ray.get(next(result_generator))
-        for _ in range(num_outputs):
-            pcoll = ray.get(next(result_generator))
-            data_ref = next(result_generator)
-            output.append(pcoll)
-            runner_execution_context.pcollection_buffers.put(pcoll, [data_ref])
+        input_data = input_bundle.input_data
+        result_generator_futures = []
+        if len(input_data) > 1:
+            logging.warning("pabloem - Stage has multiple main input PCollections which is unusual: %s",
+                            bundle_context_manager.stage.name)
+            result_generator_futures.append(ray_execute_bundle.remote(
+                runner_execution_context,
+                input_bundle,
+                transform_to_buffer_coder,
+                data_output,
+                stage_timers,
+                instruction_request_repr={
+                    "instruction_id": process_bundle_id,
+                    "process_descriptor_id": pbd_id,
+                    "cache_token": next(cache_token_generator),
+                },
+                stage_tags=getattr(bundle_context_manager.stage, "tags", None)
+            ))
+        else:
+            input_id, obj_refs = list(input_data.items())[0]
+            logging.warning("pabloem - Running stage in PARALLEL AS WE HOPED - %d blocks", len(obj_refs))
+            for i, obj_ref in enumerate(obj_refs):
+                result_generator_futures.append(ray_execute_bundle.remote(
+                    runner_execution_context,
+                    Bundle(input_timers=input_bundle.input_timers if i == 0 else {},
+                           input_data={input_id: obj_ref}),
+                    transform_to_buffer_coder,
+                    data_output,
+                    stage_timers,
+                    instruction_request_repr={
+                        "instruction_id": process_bundle_id,
+                        "process_descriptor_id": pbd_id,
+                        "cache_token": next(cache_token_generator),
+                    },
+                    stage_tags=getattr(bundle_context_manager.stage, "tags", None)
+                ))
 
-        delayed_applications = {}
-        num_delayed_applications = ray.get(next(result_generator))
-        for _ in range(num_delayed_applications):
-            pcoll = ray.get(next(result_generator))
-            data_ref = next(result_generator)
-            delayed_applications[pcoll] = data_ref
-            runner_execution_context.pcollection_buffers.put(pcoll, [data_ref])
+        final_result = None
+        final_output = set()
+        while len(result_generator_futures):
+            ready_results, result_generator_futures = ray.wait(result_generator_futures)
+            for ready_res in ready_results:
+                new_result, new_output, new_delayed_applications = self._fetch_execution_output(runner_execution_context, ready_res)
+                final_result = merge_stage_results(final_result, new_result) if final_result else new_result
+                final_output = final_output.union(new_output)
 
         (
             watermarks_by_transform_and_timer_family,
             newly_set_timers,
         ) = self._collect_written_timers(bundle_context_manager)
 
-        # TODO(pabloem): Add support for splitting of results.
+        # TODO: Set delayed applications somehow
+        return final_result, newly_set_timers, new_delayed_applications, final_output
 
-        # After collecting deferred inputs, we 'pad' the structure with empty
-        # buffers for other expected inputs.
-        # if deferred_inputs or newly_set_timers:
-        #   # The worker will be waiting on these inputs as well.
-        #   for other_input in data_input:
-        #     if other_input not in deferred_inputs:
-        #       deferred_inputs[other_input] = ListBuffer(
-        #           coder_impl=bundle_context_manager.get_input_coder_impl(
-        #               other_input))
+    def _fetch_execution_output(self, runner_execution_context: RayRunnerExecutionContext, result_generator_ref):
+        result_generator = iter(ray.get(result_generator_ref))
+        result = beam_fn_api_pb2.InstructionResponse.FromString(
+            ray.get(next(result_generator))
+        )
 
-        return result, newly_set_timers, delayed_applications, output
+        output_timers = ray.get(next(result_generator))
+        delayed_applications = ray.get(next(result_generator))
+
+        for timer_id, timer_data in output_timers.items():
+            runner_execution_context.pcollection_buffers.put(timer_id, timer_data)
+        for pcoll, data_ref in delayed_applications.items():
+            runner_execution_context.pcollection_buffers.put(pcoll, [data_ref])
+
+        output = []
+        num_outputs = ray.get(next(result_generator))
+        for _1 in range(num_outputs):
+            pcoll = ray.get(next(result_generator))
+            output.append(pcoll)
+            blocks_per_pcoll = ray.get(next(result_generator))
+            for _2 in range(blocks_per_pcoll):
+                data_ref = next(result_generator)
+                runner_execution_context.pcollection_buffers.put(pcoll, [data_ref])
+
+        return result, output, delayed_applications
 
     @staticmethod
     def _collect_written_timers(

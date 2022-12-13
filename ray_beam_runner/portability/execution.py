@@ -46,6 +46,7 @@ from apache_beam.runners.portability.fn_api_runner import worker_handlers
 from apache_beam.runners.worker import bundle_processor
 
 from ray_beam_runner.portability.state import RayStateManager
+from ray_beam_runner.serialization import register_protobuf_serializers
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ def ray_execute_bundle(
     #  repeat of pcoll, data,
     #  delayed applications, repeat of pcoll, data)
 
+    register_protobuf_serializers()
     instruction_request = beam_fn_api_pb2.InstructionRequest(
         instruction_id=instruction_request_repr["instruction_id"],
         process_bundle=beam_fn_api_pb2.ProcessBundleRequest(
@@ -136,7 +138,7 @@ def ray_execute_bundle(
         if finalize_response.error:
             raise RuntimeError(finalize_response.error)
 
-    returns = [result.SerializeToString()]
+    returns = [result]
 
     returns.append(len(output_buffers))
     for pcoll, buffer in output_buffers.items():
@@ -330,46 +332,17 @@ class RayWorkerHandlerManager:
     def __init__(self):
         self._process_bundle_descriptors = {}
 
-    def register_process_bundle_descriptor(
-        self, process_bundle_descriptor: beam_fn_api_pb2.ProcessBundleDescriptor
-    ):
+    def register_process_bundle_descriptor(self, process_bundle_descriptor):
+        ray_process_bundle_descriptor = process_bundle_descriptor
         self._process_bundle_descriptors[
-            process_bundle_descriptor.id
-        ] = process_bundle_descriptor.SerializeToString()
+            ray_process_bundle_descriptor.id
+        ] = ray_process_bundle_descriptor
 
     def process_bundle_descriptor(self, id):
-        pbd = self._process_bundle_descriptors[id]
-        if isinstance(pbd, beam_fn_api_pb2.ProcessBundleDescriptor):
-            return pbd
-        else:
-            return beam_fn_api_pb2.ProcessBundleDescriptor.FromString(pbd)
+        return self._process_bundle_descriptors[id]
 
 
 class RayStage(translations.Stage):
-    def __reduce__(self):
-        data = (
-            self.name,
-            [t.SerializeToString() for t in self.transforms],
-            self.downstream_side_inputs,
-            [],  # self.must_follow,
-            self.parent,
-            self.environment,
-            self.forced_root,
-        )
-
-        def deserializer(*args):
-            return RayStage(
-                args[0],
-                [beam_runner_api_pb2.PTransform.FromString(s) for s in args[1]],
-                args[2],
-                args[3],
-                args[4],
-                args[5],
-                args[6],
-            )
-
-        return (deserializer, data)
-
     @staticmethod
     def from_Stage(stage: translations.Stage):
         return RayStage(
@@ -427,19 +400,6 @@ class RayRunnerExecutionContext(object):
         worker_manager: Optional[RayWorkerHandlerManager] = None,
         pcollection_buffers: PcollectionBufferManager = None,
     ) -> None:
-        ray.util.register_serializer(
-            beam_runner_api_pb2.Components,
-            serializer=lambda x: x.SerializeToString(),
-            deserializer=lambda s: beam_runner_api_pb2.Components.FromString(s),
-        )
-        ray.util.register_serializer(
-            pipeline_context.PipelineContext,
-            serializer=lambda x: x.proto.SerializeToString(),
-            deserializer=lambda s: pipeline_context.PipelineContext(
-                proto=beam_runner_api_pb2.Components.FromString(s)
-            ),
-        )
-
         self.pcollection_buffers = pcollection_buffers or PcollectionBufferManager()
         self.state_servicer = state_servicer or RayStateManager()
         self.stages = [
@@ -563,34 +523,6 @@ class RayRunnerExecutionContext(object):
                 raise ValueError("Unknown access pattern: '%s'" % func_spec.urn)
 
             ray.wait(futures, num_returns=len(futures))
-
-    def __reduce__(self):
-        # We need to implement custom serialization for this particular class
-        # because it contains several members that are protocol buffers, and
-        # protobufs are not pickleable due to being a C extension - so we serialize
-        # protobufs to string before serialzing the rest of the object.
-        data = (
-            self.stages,
-            self.pipeline_components.SerializeToString(),
-            self.safe_coders,
-            self.data_channel_coders,
-            self.state_servicer,
-            self.worker_manager,
-            self.pcollection_buffers,
-        )
-
-        def deserializer(*args):
-            return RayRunnerExecutionContext(
-                args[0],
-                beam_runner_api_pb2.Components.FromString(args[1]),
-                args[2],
-                args[3],
-                args[4],
-                args[5],
-                args[6],
-            )
-
-        return (deserializer, data)
 
 
 def merge_stage_results(

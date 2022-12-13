@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1670528882559,
+  "lastUpdate": 1670968927426,
   "repoUrl": "https://github.com/ray-project/ray_beam_runner",
   "entries": {
     "Python Benchmark with pytest-benchmark": [
@@ -259,6 +259,37 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 9.509123129109762e-9",
             "extra": "mean: 87.75043694370578 nsec\nrounds: 52913"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rkenmi@gmail.com",
+            "name": "rkenmi",
+            "username": "rkenmi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "be06442dfff1c437f45cffa3a59f85283b6a14ad",
+          "message": "Register protobuf serializers (#58)\n\n* Add serialization helper for protobuf messages\r\n\r\n* Add licensing",
+          "timestamp": "2022-12-13T17:00:31-05:00",
+          "tree_id": "592c6d66cbe5c1e063e923da464136601d019086",
+          "url": "https://github.com/ray-project/ray_beam_runner/commit/be06442dfff1c437f45cffa3a59f85283b6a14ad"
+        },
+        "date": 1670968926940,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmark/simple.py::test_simple_benchmark",
+            "value": 11751211.950859495,
+            "unit": "iter/sec",
+            "range": "stddev: 1.83892957809635e-8",
+            "extra": "mean: 85.097605607066 nsec\nrounds: 58140"
           }
         ]
       }

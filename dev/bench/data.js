@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1670968927426,
+  "lastUpdate": 1671743022622,
   "repoUrl": "https://github.com/ray-project/ray_beam_runner",
   "entries": {
     "Python Benchmark with pytest-benchmark": [
@@ -290,6 +290,37 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 1.83892957809635e-8",
             "extra": "mean: 85.097605607066 nsec\nrounds: 58140"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3913185+wilsonwang371@users.noreply.github.com",
+            "name": "Wilson Wang",
+            "username": "wilsonwang371"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ecc9dba99dc9cbe51c2bbcb1fd472b288a89d1ba",
+          "message": "update benchmark test (#51)",
+          "timestamp": "2022-12-22T15:55:53-05:00",
+          "tree_id": "661ca34e44eb7122ec32a66fc92058c87c0d4dc6",
+          "url": "https://github.com/ray-project/ray_beam_runner/commit/ecc9dba99dc9cbe51c2bbcb1fd472b288a89d1ba"
+        },
+        "date": 1671743022284,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmark/basic.py::test_basic_benchmark",
+            "value": 0.018515838519181267,
+            "unit": "iter/sec",
+            "range": "stddev: 0.21528238162346025",
+            "extra": "mean: 54.0078160092 sec\nrounds: 5"
           }
         ]
       }

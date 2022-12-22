@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 #
 # Licensed to the Apache Software Foundation (ASF) under one or more
 # contributor license agreements.  See the NOTICE file distributed with
@@ -16,13 +17,15 @@
 #
 
 import ray
+from apache_beam.tools import fn_api_runner_microbenchmark as bm
 
 
 def run_pipeline():
+    bm.run_benchmark(1, 10, 100, True)
     return None
 
 
-def test_simple_benchmark(benchmark):
+def test_basic_benchmark(benchmark):
     ray.init()
 
     res = benchmark(run_pipeline)

@@ -43,7 +43,10 @@ jobs:
           pip install -U "ray @ https://s3-us-west-2.amazonaws.com/ray-wheels/latest/ray-3.0.0.dev0-cp38-cp38-manylinux2014_x86_64.whl"
       - name: Run Benchmark
         run: |
-          pytest benchmark/simple.py --benchmark-only --benchmark-json bm-result.json
+          ray start --head
+          pytest -v benchmark/basic.py --benchmark-only --benchmark-json bm-result.json
+          cat bm-result.json
+          ray stop
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
         with:

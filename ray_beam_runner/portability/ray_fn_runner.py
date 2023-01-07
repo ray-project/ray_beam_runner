@@ -125,6 +125,23 @@ def _pipeline_checks(
     return pipeline_proto
 
 
+def _select_split_manager(
+    process_bundle_descriptor: beam_fn_api_pb2.ProcessBundleDescriptor,
+):
+    """Return the split manager to use for a certain ProcessBundleDescriptor"""
+    unique_names = {
+        t.unique_name for t in process_bundle_descriptor.transforms.values()
+    }
+    for stage_name, candidate in reversed(fn_runner._split_managers):
+        if stage_name in unique_names or (stage_name + "/Process") in unique_names:
+            split_manager = candidate
+            break
+    else:
+        split_manager = None
+
+    return split_manager
+
+
 class RayFnApiRunner(runner.PipelineRunner):
     def __init__(
         self,
@@ -269,7 +286,7 @@ class RayFnApiRunner(runner.PipelineRunner):
             (
                 last_result,
                 fired_timers,
-                delayed_applications,
+                deferred_inputs,
                 bundle_outputs,
             ) = self._run_bundle(
                 runner_execution_context,
@@ -278,7 +295,7 @@ class RayFnApiRunner(runner.PipelineRunner):
             )
 
             final_result = merge_stage_results(final_result, last_result)
-            if not delayed_applications and not fired_timers:
+            if not deferred_inputs and not fired_timers:
                 break
             else:
                 # TODO: Enable following assertion after watermarking is implemented
@@ -292,7 +309,9 @@ class RayFnApiRunner(runner.PipelineRunner):
                 #     runner_execution_context.watermark_manager
                 #     .get_stage_node.remote(
                 #     bundle_context_manager.stage.name)))
-                input_data = delayed_applications
+
+                #
+                input_data = {k: [v] for k, v in deferred_inputs.items()}
                 input_timers = fired_timers
 
         # Store the required downstream side inputs into state so it is accessible
@@ -327,6 +346,7 @@ class RayFnApiRunner(runner.PipelineRunner):
         )
 
         process_bundle_descriptor = bundle_context_manager.process_bundle_descriptor
+        split_manager = _select_split_manager(process_bundle_descriptor)
 
         # TODO(pabloem): Are there two different IDs? the Bundle ID and PBD ID?
         process_bundle_id = "bundle_%s" % process_bundle_descriptor.id
@@ -338,6 +358,7 @@ class RayFnApiRunner(runner.PipelineRunner):
             transform_to_buffer_coder,
             data_output,
             stage_timers,
+            split_manager,
             instruction_request_repr={
                 "instruction_id": process_bundle_id,
                 "process_descriptor_id": pbd_id,
@@ -355,12 +376,12 @@ class RayFnApiRunner(runner.PipelineRunner):
             output.append(pcoll)
             runner_execution_context.pcollection_buffers.put(pcoll, [data_ref])
 
-        delayed_applications = {}
-        num_delayed_applications = ray.get(next(result_generator))
-        for _ in range(num_delayed_applications):
+        deferred_inputs = {}
+        num_deferred_inputs = ray.get(next(result_generator))
+        for _ in range(num_deferred_inputs):
             pcoll = ray.get(next(result_generator))
             data_ref = next(result_generator)
-            delayed_applications[pcoll] = data_ref
+            deferred_inputs[pcoll] = data_ref
             runner_execution_context.pcollection_buffers.put(pcoll, [data_ref])
 
         (
@@ -380,7 +401,7 @@ class RayFnApiRunner(runner.PipelineRunner):
         #           coder_impl=bundle_context_manager.get_input_coder_impl(
         #               other_input))
 
-        return result, newly_set_timers, delayed_applications, output
+        return result, newly_set_timers, deferred_inputs, output
 
     @staticmethod
     def _collect_written_timers(

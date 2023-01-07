@@ -1615,18 +1615,18 @@ class RayRunnerMetricsTest(unittest.TestCase):
             raise
 
 
-@unittest.skip("Runner-initiated splitting not yet supported")
 class RayRunnerSplitTest(unittest.TestCase):
     def setUp(self) -> None:
-        if not ray.is_initialized():
-            ray.init(num_cpus=1, include_dashboard=False)
+        ray.init(num_cpus=1, include_dashboard=False, ignore_reinit_error=True)
 
     def tearDown(self) -> None:
         ray.shutdown()
 
     def create_pipeline(self, is_drain=False):
         return beam.Pipeline(
-            runner=ray_beam_runner.portability.ray_fn_runner.RayFnApiRunner()
+            runner=ray_beam_runner.portability.ray_fn_runner.RayFnApiRunner(
+                is_drain=is_drain
+            )
         )
 
     def test_checkpoint(self):
@@ -1644,19 +1644,32 @@ class RayRunnerSplitTest(unittest.TestCase):
             # Split as close to current as possible.
             split_result = yield 0.0
             # Verify we split at exactly the first element.
-            self.verify_channel_split(split_result, 0, 1)
+            verify_channel_split(split_result, 0, 1)
             # Continue processing.
             breakpoint.clear()
 
         self.run_split_pipeline(split_manager, list("abc"), element_counter)
 
     def test_split_half(self):
+        @ray.remote(num_cpus=0)
+        class ListActor:
+            def __init__(self):
+                self._list = []
+
+            def append(self, elem):
+                self._list.append(elem)
+
+            def get(self):
+                return self._list
+
+        seen_bundle_sizes_actor = ListActor.remote()
+
         total_num_elements = 25
         seen_bundle_sizes = []
         element_counter = ElementCounter()
 
         def split_manager(num_elements):
-            seen_bundle_sizes.append(num_elements)
+            seen_bundle_sizes_actor.append.remote(num_elements)
             if num_elements == total_num_elements:
                 element_counter.reset()
                 breakpoint = element_counter.set_breakpoint(5)
@@ -1664,14 +1677,15 @@ class RayRunnerSplitTest(unittest.TestCase):
                 breakpoint.wait()
                 # Split the remainder (20, then 10, elements) in half.
                 split1 = yield 0.5
-                self.verify_channel_split(split1, 14, 15)  # remainder is 15 to end
+                verify_channel_split(split1, 14, 15)  # remainder is 15 to end
                 split2 = yield 0.5
-                self.verify_channel_split(split2, 9, 10)  # remainder is 10 to end
+                verify_channel_split(split2, 9, 10)  # remainder is 10 to end
                 breakpoint.clear()
 
         self.run_split_pipeline(
             split_manager, range(total_num_elements), element_counter
         )
+        seen_bundle_sizes = ray.get(seen_bundle_sizes_actor.get.remote())
         self.assertEqual([25, 15], seen_bundle_sizes)
 
     def run_split_pipeline(self, split_manager, elements, element_counter=None):
@@ -1708,21 +1722,33 @@ class RayRunnerSplitTest(unittest.TestCase):
 
     def run_sdf_split_half(self, is_drain=False):
         element_counter = ElementCounter()
-        is_first_bundle = True
+
+        @ray.remote(num_cpus=0)
+        class IsFirstBundleActor:
+            def __init__(self):
+                self._seen_first = False
+
+            # return whether the caller is the first to call this method
+            def check_first(self):
+                if not self._seen_first:
+                    self._seen_first = True
+                    return True
+                return False
+
+        is_first_bundle_actor = IsFirstBundleActor.remote()
 
         def split_manager(num_elements):
-            nonlocal is_first_bundle
+            is_first_bundle = ray.get(is_first_bundle_actor.check_first.remote())
             if is_first_bundle and num_elements > 0:
-                is_first_bundle = False
                 breakpoint = element_counter.set_breakpoint(1)
                 yield
                 breakpoint.wait()
                 split1 = yield 0.5
                 split2 = yield 0.5
                 split3 = yield 0.5
-                self.verify_channel_split(split1, 0, 1)
-                self.verify_channel_split(split2, -1, 1)
-                self.verify_channel_split(split3, -1, 1)
+                verify_channel_split(split1, 0, 1)
+                verify_channel_split(split2, -1, 1)
+                verify_channel_split(split3, -1, 1)
                 breakpoint.clear()
 
         elements = [4, 4]
@@ -1763,7 +1789,6 @@ class RayRunnerSplitTest(unittest.TestCase):
             _LOGGER.error("test_split_crazy_sdf.seed = %s", seed)
             raise
 
-    @unittest.skip("SDF not yet supported")
     def test_nosplit_sdf(self):
         def split_manager(num_elements):
             yield
@@ -1774,27 +1799,21 @@ class RayRunnerSplitTest(unittest.TestCase):
             split_manager, elements, ElementCounter(), expected_groups
         )
 
-    @unittest.skip("SDF not yet supported")
     def test_checkpoint_sdf(self):
         self.run_sdf_checkpoint(is_drain=False)
 
-    @unittest.skip("SDF not yet supported")
     def test_checkpoint_draining_sdf(self):
         self.run_sdf_checkpoint(is_drain=True)
 
-    @unittest.skip("SDF not yet supported")
     def test_split_half_sdf(self):
         self.run_sdf_split_half(is_drain=False)
 
-    @unittest.skip("SDF not yet supported")
     def test_split_half_draining_sdf(self):
         self.run_sdf_split_half(is_drain=True)
 
-    @unittest.skip("SDF not yet supported")
     def test_split_crazy_sdf(self, seed=None):
         self.run_split_crazy_sdf(seed=seed, is_drain=False)
 
-    @unittest.skip("SDF not yet supported")
     def test_split_crazy_draining_sdf(self, seed=None):
         self.run_split_crazy_sdf(seed=seed, is_drain=True)
 
@@ -1856,29 +1875,31 @@ class RayRunnerSplitTest(unittest.TestCase):
                         grouped, equal_to(expected_groups), label="CheckGrouped"
                     )
 
-    def verify_channel_split(self, split_result, last_primary, first_residual):
-        self.assertEqual(1, len(split_result.channel_splits), split_result)
-        (channel_split,) = split_result.channel_splits
-        self.assertEqual(last_primary, channel_split.last_primary_element)
-        self.assertEqual(first_residual, channel_split.first_residual_element)
-        # There should be a primary and residual application for each element
-        # not covered above.
-        self.assertEqual(
-            first_residual - last_primary - 1,
-            len(split_result.primary_roots),
-            split_result.primary_roots,
-        )
-        self.assertEqual(
-            first_residual - last_primary - 1,
-            len(split_result.residual_roots),
-            split_result.residual_roots,
-        )
+
+# use regular asserts here since unittest.TestCase cannot be pickled
+def verify_channel_split(split_result, last_primary, first_residual):
+    assert 1 == len(split_result.channel_splits), split_result
+    (channel_split,) = split_result.channel_splits
+    assert last_primary == channel_split.last_primary_element
+    assert first_residual == channel_split.first_residual_element
+    # There should be a primary and residual application for each element
+    # not covered above.
+    assert first_residual - last_primary - 1 == len(
+        split_result.primary_roots
+    ), split_result.primary_roots
+    assert first_residual - last_primary - 1 == len(
+        split_result.residual_roots
+    ), split_result.residual_roots
 
 
 class ElementCounter(object):
     """Used to wait until a certain number of elements are seen."""
 
-    def __init__(self):
+    def __init__(self, name=None):
+        if name is None:
+            name = uuid.uuid4().hex
+        self._name = name
+
         self._cv = threading.Condition()
         self.reset()
 
@@ -1918,16 +1939,21 @@ class ElementCounter(object):
         return Breakpoint()
 
     def __reduce__(self):
-        # Ensure we get the same element back through a pickling round-trip.
-        name = uuid.uuid4().hex
-        _pickled_element_counters[name] = self
-        return _unpickle_element_counter, (name,)
+        # Ensure that when we unpickle a counter multiple times
+        # within the same process, all instances will be backed by the same object.
+        # This is required for the per-process locks to work.
+        # For the current test suite, having counters that work across
+        # process boundaries is not required.
+        _pickled_element_counters[self._name] = self
+        return _unpickle_element_counter, (self._name,)
 
 
 _pickled_element_counters = {}  # type: Dict[str, ElementCounter]
 
 
 def _unpickle_element_counter(name):
+    if name not in _pickled_element_counters:
+        _pickled_element_counters[name] = ElementCounter(name=name)
     return _pickled_element_counters[name]
 
 

@@ -412,9 +412,7 @@ class RayFnApiRunner(runner.PipelineRunner):
         ), buffer_id in bundle_context.stage_timers.items():
             timer_buffer = buffer_manager.get(buffer_id)
 
-            coder_id = bundle_context._timer_coder_ids[
-                (transform_id, timer_family_id)
-            ]
+            coder_id = bundle_context._timer_coder_ids[(transform_id, timer_family_id)]
 
             coder = execution_context.pipeline_context.coders[coder_id]
             timer_coder_impl = coder.get_impl()

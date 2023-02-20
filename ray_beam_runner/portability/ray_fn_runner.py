@@ -52,7 +52,7 @@ from apache_beam.runners.portability import portable_metrics
 from apache_beam.portability.api import metrics_pb2
 
 import ray
-from ray_beam_runner.portability.context_management import RayBundleContextManager
+from ray_beam_runner.portability.context_management import RayBundleContext
 from ray_beam_runner.portability.execution import Bundle, _get_input_id
 from ray_beam_runner.portability.execution import (
     ray_execute_bundle,
@@ -223,7 +223,7 @@ class RayFnApiRunner(runner.PipelineRunner):
 
         try:
             for stage in stages:
-                bundle_ctx = RayBundleContextManager(runner_execution_context, stage)
+                bundle_ctx = RayBundleContext(runner_execution_context, stage)
                 result = self._run_stage(runner_execution_context, bundle_ctx, queue)
                 monitoring_infos_by_stage[
                     bundle_ctx.stage.name
@@ -236,7 +236,7 @@ class RayFnApiRunner(runner.PipelineRunner):
     def _run_stage(
         self,
         runner_execution_context: RayRunnerExecutionContext,
-        bundle_context_manager: RayBundleContextManager,
+        bundle_context: RayBundleContext,
         ready_bundles: collections.deque,
     ) -> beam_fn_api_pb2.InstructionResponse:
 
@@ -248,9 +248,9 @@ class RayFnApiRunner(runner.PipelineRunner):
           bundle_context_manager (execution.BundleContextManager): A description of
             the stage to execute, and its context.
         """
-        bundle_context_manager.setup()
+        bundle_context.setup()
         runner_execution_context.worker_manager.register_process_bundle_descriptor(
-            bundle_context_manager.process_bundle_descriptor
+            bundle_context.process_bundle_descriptor
         )
         input_timers: Mapping[
             translations.TimerFamilyId, execution.PartitionableBuffer
@@ -258,9 +258,9 @@ class RayFnApiRunner(runner.PipelineRunner):
 
         input_data = {
             k: runner_execution_context.pcollection_buffers.get(
-                _get_input_id(bundle_context_manager.transform_to_buffer_coder[k][0], k)
+                _get_input_id(bundle_context.transform_to_buffer_coder[k][0], k)
             )
-            for k in bundle_context_manager.transform_to_buffer_coder
+            for k in bundle_context.transform_to_buffer_coder
         }
 
         final_result = None  # type: Optional[beam_fn_api_pb2.InstructionResponse]
@@ -273,7 +273,7 @@ class RayFnApiRunner(runner.PipelineRunner):
                 bundle_outputs,
             ) = self._run_bundle(
                 runner_execution_context,
-                bundle_context_manager,
+                bundle_context,
                 Bundle(input_timers=input_timers, input_data=input_data),
             )
 
@@ -298,7 +298,7 @@ class RayFnApiRunner(runner.PipelineRunner):
         # Store the required downstream side inputs into state so it is accessible
         # for the worker when it runs bundles that consume this stage's output.
         data_side_input = runner_execution_context.side_input_descriptors_by_stage.get(
-            bundle_context_manager.stage.name, {}
+            bundle_context.stage.name, {}
         )
         runner_execution_context.commit_side_inputs_to_state(data_side_input)
 
@@ -307,7 +307,7 @@ class RayFnApiRunner(runner.PipelineRunner):
     def _run_bundle(
         self,
         runner_execution_context: RayRunnerExecutionContext,
-        bundle_context_manager: RayBundleContextManager,
+        bundle_context: RayBundleContext,
         input_bundle: Bundle,
     ) -> Tuple[
         beam_fn_api_pb2.InstructionResponse,
@@ -320,13 +320,13 @@ class RayFnApiRunner(runner.PipelineRunner):
             transform_to_buffer_coder,
             data_output,
             stage_timers,
-        ) = bundle_context_manager.get_bundle_inputs_and_outputs()
+        ) = bundle_context.get_bundle_inputs_and_outputs()
 
         cache_token_generator = fn_runner.FnApiRunner.get_cache_token_generator(
             static=False
         )
 
-        process_bundle_descriptor = bundle_context_manager.process_bundle_descriptor
+        process_bundle_descriptor = bundle_context.process_bundle_descriptor
 
         # TODO(pabloem): Are there two different IDs? the Bundle ID and PBD ID?
         process_bundle_id = "bundle_%s" % process_bundle_descriptor.id
@@ -366,7 +366,7 @@ class RayFnApiRunner(runner.PipelineRunner):
         (
             watermarks_by_transform_and_timer_family,
             newly_set_timers,
-        ) = self._collect_written_timers(bundle_context_manager)
+        ) = self._collect_written_timers(bundle_context)
 
         # TODO(pabloem): Add support for splitting of results.
 
@@ -384,7 +384,7 @@ class RayFnApiRunner(runner.PipelineRunner):
 
     @staticmethod
     def _collect_written_timers(
-        bundle_context_manager: RayBundleContextManager,
+        bundle_context: RayBundleContext,
     ) -> Tuple[
         Dict[translations.TimerFamilyId, timestamp.Timestamp],
         Mapping[translations.TimerFamilyId, execution.PartitionableBuffer],
@@ -403,18 +403,16 @@ class RayFnApiRunner(runner.PipelineRunner):
         timer_watermark_data = {}
         newly_set_timers = {}
 
-        execution_context = bundle_context_manager.execution_context
+        execution_context = bundle_context.execution_context
         buffer_manager = execution_context.pcollection_buffers
 
         for (
             transform_id,
             timer_family_id,
-        ), buffer_id in bundle_context_manager.stage_timers.items():
+        ), buffer_id in bundle_context.stage_timers.items():
             timer_buffer = buffer_manager.get(buffer_id)
 
-            coder_id = bundle_context_manager._timer_coder_ids[
-                (transform_id, timer_family_id)
-            ]
+            coder_id = bundle_context._timer_coder_ids[(transform_id, timer_family_id)]
 
             coder = execution_context.pipeline_context.coders[coder_id]
             timer_coder_impl = coder.get_impl()

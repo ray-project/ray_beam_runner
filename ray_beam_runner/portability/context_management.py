@@ -36,7 +36,7 @@ from apache_beam.utils import proto_utils
 from ray_beam_runner.portability.execution import RayRunnerExecutionContext
 
 
-class RayBundleContextManager:
+class RayBundleContext:
     def __init__(
         self,
         execution_context: RayRunnerExecutionContext,
@@ -63,7 +63,7 @@ class RayBundleContextManager:
         data = (self.execution_context, self.stage)
 
         def deserializer(args):
-            RayBundleContextManager(args[0], args[1])
+            RayBundleContext(args[0], args[1])
 
         return (deserializer, data)
 

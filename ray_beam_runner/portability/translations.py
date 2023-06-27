@@ -27,23 +27,12 @@ from apache_beam.runners.portability.fn_api_runner.translations import Transform
 from apache_beam.runners.worker import bundle_processor
 
 
-class StageTags:
-  GROUPING_SHUFFLE = 'GroupingShuffle'
-  RANDOM_SHUFFLE = 'RandomShuffle'
-
-
-class _RayRunnerStage(Stage):
-  def __init__(self, name, transforms, *args, tags: typing.Set[str] = None, **kwargs):
-    super().__init__(name, transforms, *args, **kwargs)
-    self.tags: typing.Set[str] = tags or set()
-
-
 def expand_reshuffle(stages: typing.Iterable[Stage], pipeline_context: TransformContext) -> typing.Iterator[Stage]:
   for s in stages:
     t = beam_translations.only_transform(s.transforms)
     if t.spec.urn == common_urns.composites.RESHUFFLE.urn:
       reshuffle_buffer = beam_translations.create_buffer_id(s.name)
-      reshuffle_write = _RayRunnerStage(
+      reshuffle_write = Stage(
         t.unique_name + '/Write',
         [
           beam_runner_api_pb2.PTransform(
@@ -55,11 +44,10 @@ def expand_reshuffle(stages: typing.Iterable[Stage], pipeline_context: Transform
         ],
         downstream_side_inputs=frozenset(),
         must_follow=s.must_follow,
-        tags={StageTags.RANDOM_SHUFFLE}
       )
       yield reshuffle_write
 
-      yield _RayRunnerStage(
+      yield Stage(
         t.unique_name + '/Read',
         [
           beam_runner_api_pb2.PTransform(
@@ -97,8 +85,8 @@ def expand_gbk(stages, pipeline_context):
         transform_id = beam_translations.unique_name(
           pipeline_context.components.transforms, stage.name)
         pipeline_context.components.transforms[transform_id].CopyFrom(transform)
-      gbk_buffer = beam_translations.create_buffer_id(transform_id)
-      gbk_write = _RayRunnerStage(
+      gbk_buffer = beam_translations.create_buffer_id(transform_id, kind='group')
+      gbk_write = Stage(
         transform.unique_name + '/Write',
         [
           beam_runner_api_pb2.PTransform(
@@ -109,8 +97,7 @@ def expand_gbk(stages, pipeline_context):
               payload=gbk_buffer))
         ],
         downstream_side_inputs=frozenset(),
-        must_follow=stage.must_follow,
-        tags={StageTags.GROUPING_SHUFFLE})
+        must_follow=stage.must_follow)
       yield gbk_write
 
       yield Stage(

@@ -90,10 +90,14 @@ def ray_execute_bundle(
             cache_tokens=[instruction_request_repr["cache_token"]],
         ),
     )
+
+    # TODO(pabloem): CHECK THIS TO MAKE SURE IS GOOD
+    expects_group = any(k.startswith('group') for k in expected_outputs.keys())
+
     output_buffers: Mapping[
         str, typing.Union[KeyBlockBasedDataBuffer, RandomBlockBasedDataBuffer]
     ] = collections.defaultdict(
-        KeyBlockBasedDataBuffer if StageTags.GROUPING_SHUFFLE in stage_tags else RandomBlockBasedDataBuffer
+        KeyBlockBasedDataBuffer if expects_group else RandomBlockBasedDataBuffer
     )
 
     output_timer_buffers: Mapping[
@@ -117,14 +121,18 @@ def ray_execute_bundle(
         for k, objrefs in input_bundle.input_data.items()
     }
 
-    print("pabloem - input data " + str(input_data) + str(list(list(input_data.items())[0][1])))
     for transform_id, elements in input_data.items():
         data_out = worker_handler.data_conn.output_stream(
             process_bundle_id, transform_id
         )
-        for byte_stream in elements:
-            data_out.write(byte_stream)
-        data_out.close()
+        try:
+            for byte_stream in elements:
+                data_out.write(byte_stream)
+            data_out.close()
+        except:
+            # raise
+            import ray
+            ray.util.pdb.set_trace()
 
     result_future = worker_handler.control_conn.push(instruction_request)
 
@@ -179,9 +187,9 @@ def ray_execute_bundle(
     returns.append(len(output_buffers))
     for pcoll, buffer in output_buffers.items():
         returns.append(pcoll)
-        returns.append(len(buffer.blocks))
-        for block in buffer.blocks:
-            returns.append(block)
+        returns.append(buffer.num_blocks())
+        for i in range(buffer.num_blocks()):
+            returns.append(buffer.blocks[i])
 
     for ret in returns:
         yield ret
@@ -189,9 +197,12 @@ def ray_execute_bundle(
 
 class RandomBlockBasedDataBuffer:
     def __init__(self):
-        self.num_blocks = BLOCKS_PER_TASK
-        self.blocks = [[] for _ in range(self.num_blocks)]
+        self._num_blocks = BLOCKS_PER_TASK
+        self.blocks = [[] for _ in range(self._num_blocks)]
         self._total_data = 0
+
+    def num_blocks(self):
+        return min(self._total_data, self._num_blocks)
 
     def append(self, data):
         self.blocks[self._total_data % len(self.blocks)].append(data)
@@ -200,8 +211,11 @@ class RandomBlockBasedDataBuffer:
 
 class KeyBlockBasedDataBuffer:
     def __init__(self):
-        self.num_blocks = 1
-        self.blocks = [[] for _ in range(self.num_blocks)]
+        self._num_blocks = 1
+        self.blocks = [[] for _ in range(self._num_blocks)]
+
+    def num_blocks(self):
+        return 1
 
     def append(self, data):
         # TODO: Figure out how to get the Key for the data.
@@ -304,6 +318,7 @@ def _fetch_decode_data(
     data_references: List[ray.ObjectRef],
 ):
     """Fetch a PCollection's data and decode it."""
+    logging.warning("pabloem - Buffer is %s" % buffer_id)
     if buffer_id.startswith(b"group"):
         _, pcoll_id = translations.split_buffer_id(buffer_id)
         transform = runner_context.pipeline_components.transforms[pcoll_id]
@@ -329,15 +344,10 @@ def _fetch_decode_data(
             windowing=apache_beam.Windowing.from_runner_api(windowing_strategy, None),
         )
     else:
-        buffer = fn_execution.ListBuffer(
-            coder_impl=runner_context.pipeline_context.coders[coder_id].get_impl()
-        )
+        buffer = []
 
     for block in ray.get(data_references):
-        # TODO(pabloem): Stop using ListBuffer, and use different
-        #  buffers to pass data to Beam.
-        for elm in block:
-            buffer.append(elm)
+        buffer.extend(block)
     return buffer
 
 

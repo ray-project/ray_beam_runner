@@ -19,6 +19,7 @@
 # pytype: skip-file
 # mypy: check-untyped-defs
 import collections
+import concurrent.futures
 import copy
 import logging
 import typing
@@ -251,6 +252,7 @@ class RayFnApiRunner(runner.PipelineRunner):
 
         final_result = None  # type: Optional[beam_fn_api_pb2.InstructionResponse]
 
+        logging.warning("Executing stage %s", bundle_context_manager.stage.name)
         while True:
             (
                 last_result,
@@ -322,11 +324,22 @@ class RayFnApiRunner(runner.PipelineRunner):
         input_data = input_bundle.input_data
         result_generator_futures = []
         if len(input_data) > 1:
-            logging.warning("pabloem - Stage has multiple main input PCollections which is unusual: %s",
-                            bundle_context_manager.stage.name)
+            raise RuntimeError(
+                "pabloem - Stage has multiple main input PCollections "
+                "which is unusual: %s"
+                % bundle_context_manager.stage.name)
+
+        input_id, obj_refs = list(input_data.items())[0]
+        logging.warning("pabloem - Running stage in PARALLEL AS WE HOPED - %d blocks", len(obj_refs))
+        # TODO(pabloem): This is an awful hack. HOW DO WE FREAKIN KEEP KEYED DATA TOGETHER?!
+        #   TODO(pableom): DO GROUPING PER KEY.
+        if 'GroupByKey/Read' in input_id:
+            obj_refs = [obj_refs]
+        for i, obj_ref in enumerate(obj_refs):
             result_generator_futures.append(ray_execute_bundle.remote(
                 runner_execution_context,
-                input_bundle,
+                Bundle(input_timers=input_bundle.input_timers if i == 0 else {},
+                       input_data={input_id: [obj_ref] if not isinstance(obj_ref, list) else obj_ref}),
                 transform_to_buffer_coder,
                 data_output,
                 stage_timers,
@@ -337,33 +350,17 @@ class RayFnApiRunner(runner.PipelineRunner):
                 },
                 stage_tags=getattr(bundle_context_manager.stage, "tags", None)
             ))
-        else:
-            input_id, obj_refs = list(input_data.items())[0]
-            logging.warning("pabloem - Running stage in PARALLEL AS WE HOPED - %d blocks", len(obj_refs))
-            for i, obj_ref in enumerate(obj_refs):
-                result_generator_futures.append(ray_execute_bundle.remote(
-                    runner_execution_context,
-                    Bundle(input_timers=input_bundle.input_timers if i == 0 else {},
-                           input_data={input_id: obj_ref}),
-                    transform_to_buffer_coder,
-                    data_output,
-                    stage_timers,
-                    instruction_request_repr={
-                        "instruction_id": process_bundle_id,
-                        "process_descriptor_id": pbd_id,
-                        "cache_token": next(cache_token_generator),
-                    },
-                    stage_tags=getattr(bundle_context_manager.stage, "tags", None)
-                ))
 
         final_result = None
         final_output = set()
-        while len(result_generator_futures):
+        while True:
             ready_results, result_generator_futures = ray.wait(result_generator_futures)
             for ready_res in ready_results:
                 new_result, new_output, new_delayed_applications = self._fetch_execution_output(runner_execution_context, ready_res)
                 final_result = merge_stage_results(final_result, new_result) if final_result else new_result
                 final_output = final_output.union(new_output)
+            if not result_generator_futures:
+                break
 
         (
             watermarks_by_transform_and_timer_family,
@@ -375,8 +372,9 @@ class RayFnApiRunner(runner.PipelineRunner):
 
     def _fetch_execution_output(self, runner_execution_context: RayRunnerExecutionContext, result_generator_ref):
         result_generator = iter(ray.get(result_generator_ref))
+        response_str = ray.get(next(result_generator))
         result = beam_fn_api_pb2.InstructionResponse.FromString(
-            ray.get(next(result_generator))
+            response_str
         )
 
         output_timers = ray.get(next(result_generator))

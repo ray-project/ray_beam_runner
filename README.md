@@ -21,8 +21,6 @@ virtualenv venv
 pip install -r requirements_dev.txt
 
 # Create a local installation to include test dependencies
-pip install -e .[test]
-# Or if saw error messages like "zsh: no matches found: .[test]", try:
 pip install -e '.[test]'
 ```
 
@@ -36,6 +34,9 @@ functionality exist in the file `ray_beam_runner/portability/ray_runner_test.py`
 ```shell
 pytest ray_beam_runner/portability/ray_runner_test.py
 ```
+
+If you got `ImportError: urllib3 v2.0 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'OpenSSL XXXXX'. See: https://github.com/urllib3/urllib3/issues/2168`, following instructions on the given URL might solve. You can either have `OpenSSL` updated or explicitly restrict version of `urllib3` library.
+
 
 To run all local unit tests, you can simply run `pytest` from the root directory.
 
